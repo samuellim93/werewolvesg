@@ -317,6 +317,26 @@ function GameView({ room, socket, role, countdown, onLeave }) {
           {log.map((entry, i) => <p key={i}>{entry}</p>)}
         </div>
       </div>
+
+      {showGuide && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
+          <div className="card" style={{ maxWidth: '500px' }}>
+            <h2>游戏规则：{room.mode === '预女猎' ? '预女猎' : '预女猎白'}</h2>
+            <div style={{ textAlign: 'left', marginTop: '20px', maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
+              <p><strong>狼人杀 ({room.mode === '预女猎' ? '预女猎' : '预女猎白'})</strong> 是标准的 {room.maxPlayers} 人板子：</p>
+              <ul style={{ paddingLeft: '20px', marginTop: '10px', color: 'var(--text-dim)', lineHeight: '1.6' }}>
+                <li><strong>狼人 ({room.mode === '预女猎' ? 3 : 4}名)：</strong> 每晚可以杀害一名玩家。</li>
+                <li><strong>预言家 (1名)：</strong> 每晚可以查验一名玩家的身份（好人/坏人）。</li>
+                <li><strong>女巫 (1名)：</strong> 拥有一瓶灵药（救人）和一瓶毒药（杀人），每种只能使用一次。</li>
+                <li><strong>猎人 (1名)：</strong> 被杀或被投出且未被毒死时，可以开枪带走一名玩家。</li>
+                {room.mode !== '预女猎' && <li><strong>白痴 (1名)：</strong> 被投票出局时可以翻牌免死，但失去投票权。</li>}
+                <li><strong>平民 ({room.mode === '预女猎' ? 3 : 4}名)：</strong> 无特殊能力，通过分析推理找出狼人。</li>
+              </ul>
+            </div>
+            <button className="btn btn-primary" style={{ marginTop: '20px' }} onClick={() => setShowGuide(false)}>我明白了</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
