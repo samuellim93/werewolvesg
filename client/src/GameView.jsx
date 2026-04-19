@@ -141,13 +141,13 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       );
     }
 
-    if (room.phase === 'NIGHT_SEER' && (role.name === '预言家' || hasGodMode)) {
+    if (room.phase === 'NIGHT_SEER' && (role?.name === '预言家' || hasGodMode)) {
       return (
         <div>
           <h4>预言家行动：请选择验人目标</h4>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
             {room.slots.filter(p => p && p.gameRole?.isAlive).map(p => (
-              <button key={p.id} className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem' }} onClick={() => initiateAction('seer_verify', p)}>查验 #{room.slots.indexOf(p) + 1}</button>
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('seer_verify', p)}>查验 #{room.slots.indexOf(p) + 1}</button>
             ))}
             {hasGodMode && <button className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', opacity: 0.6 }} onClick={handleFinishTurn}>跳过</button>}
           </div>
@@ -155,7 +155,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       );
     }
 
-    if (room.phase === 'NIGHT_WITCH' && (role.name === '女巫' || hasGodMode)) {
+    if (room.phase === 'NIGHT_WITCH' && (role?.name === '女巫' || hasGodMode)) {
       const victim = room.players.find(p => p.id === room.nightActions.killed);
       const canSave = victim && (victim.id !== socket.id || hasGodMode);
 
@@ -167,12 +167,12 @@ function GameView({ room, socket, role, countdown, onLeave }) {
           </div>
           <p style={{ fontSize: '0.9rem' }}>{victim ? `昨晚被杀的是：${room.slots.findIndex(s => s?.id === victim.id) + 1} 号。` : '昨晚是平安夜。'}</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
-            {canSave && !room.nightActions.saved && <button className="btn btn-primary" style={{ width: 'auto' }} onClick={() => initiateAction('save', victim)}>使用救药</button>}
+            {canSave && !room.nightActions.saved && <button className="btn btn-primary" style={{ width: 'auto', minWidth: '150px' }} onClick={() => initiateAction('save', victim)}>使用救药</button>}
             <div style={{ textAlign: 'left' }}>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '5px' }}>毒杀目标：</p>
-              <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '8px' }}>毒杀目标：</p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 {room.slots.filter(p => p && p.gameRole?.isAlive).map(p => (
-                  <button key={p.id} className="btn btn-secondary" style={{ width: 'auto', padding: '5px 8px', fontSize: '0.7rem' }} onClick={() => initiateAction('poison', p)}>#{room.slots.indexOf(p) + 1}</button>
+                  <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('poison', p)}>#{room.slots.indexOf(p) + 1}</button>
                 ))}
               </div>
             </div>

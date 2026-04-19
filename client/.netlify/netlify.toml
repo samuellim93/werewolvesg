@@ -9,6 +9,7 @@ headers = []
 publish = "C:\\Users\\SamuelLim\\.gemini\\antigravity\\scratch\\modern-login-app\\client\\dist"
 publishOrigin = "ui"
 commandOrigin = "ui"
+base = "C:\\Users\\SamuelLim\\.gemini\\antigravity\\scratch\\modern-login-app\\client"
 command = "npm run build"
 
 [build.environment]

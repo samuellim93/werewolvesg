@@ -40,12 +40,16 @@ io.on('connection', (socket) => {
 
   socket.on('create_room', ({ user, mode }) => {
     const roomId = generateRoomId();
-    const gameMode = mode || '预女猎白';
+    const gameMode = (mode || '预女猎白').trim();
+    const maxPlayers = gameMode === '预女猎' ? 9 : 12;
+    
+    console.log(`[Room Created] ID: ${roomId}, Mode: "${gameMode}", MaxPlayers: ${maxPlayers}`);
+
     rooms[roomId] = {
       id: roomId, creator: socket.id, mode: gameMode,
       players: [{ ...user, id: socket.id, ready: false, spot: 0 }],
-      slots: new Array(12).fill(null),
-      maxPlayers: 12, status: 'LOBBY', isSimulation: false, currentTimer: null,
+      slots: new Array(maxPlayers).fill(null),
+      maxPlayers, status: 'LOBBY', isSimulation: false, currentTimer: null,
       sequenceOrder: [...DEFAULT_SEQUENCE]
     };
     rooms[roomId].slots[0] = rooms[roomId].players[0];
@@ -144,7 +148,14 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room) return;
     const rolesMeta = await db.getRoles();
-    const rolePool = ['狼人', '狼人', '狼人', '狼人', '预言家', '女巫', '猎人', '白痴', '平民', '平民', '平民', '平民'];
+    
+    let rolePool = [];
+    if (room.mode === '预女猎') {
+      rolePool = ['狼人', '狼人', '狼人', '预言家', '女巫', '猎人', '平民', '平民', '平民'];
+    } else {
+      rolePool = ['狼人', '狼人', '狼人', '狼人', '预言家', '女巫', '猎人', '白痴', '平民', '平民', '平民', '平民'];
+    }
+    
     shuffle(rolePool);
     room.slots.forEach((player, index) => {
       if (player) {

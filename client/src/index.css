@@ -287,11 +287,34 @@ input:focus {
   .btn-fit {
     width: 100% !important;
   }
+
+  .dashboard {
+    padding-bottom: 100px !important;
+  }
 }
 
 @media (max-width: 768px) {
   .card { padding: 20px; }
-  .player-grid { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; }
+  .player-grid { 
+    grid-template-columns: repeat(2, 1fr) !important; 
+    gap: 8px; 
+  }
   h1 { font-size: 1.8rem; }
   h2 { font-size: 1.4rem; }
+
+  .player-slot div {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.btn-action {
+  min-width: 48px;
+  min-height: 48px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 5px !important;
 }
