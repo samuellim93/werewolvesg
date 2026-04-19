@@ -61,7 +61,7 @@ const useNarrator = () => {
         opening: '猎人请睁眼。请确认你目前的状态。', 
         closing: '猎人请闭眼。' 
     },
-    'DAY_START': { 
+    'RESULTS': { 
       type: 'AUTO', 
       text: '天亮了，所有人请睁眼。' 
     }

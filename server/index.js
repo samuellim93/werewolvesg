@@ -209,6 +209,7 @@ io.on('connection', (socket) => {
       if (p) { p.gameRole.isAlive = false; results.push({ name: p.name, type: 'poisoned' }); if (p.gameRole.name === '猎人') p.gameRole.canShoot = false; }
     }
     room.nightResults = results;
+    console.log(`[Transition] Room: ${roomId} - Switching to DAY. Results:`, results);
     io.to(roomId).emit('room_update', room);
     
     if (room.currentTimer) clearTimeout(room.currentTimer);

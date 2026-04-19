@@ -32,19 +32,16 @@ function GameView({ room, socket, role, countdown, onLeave }) {
 
     setCanAct(false);
 
+    console.log(`[Narrator Controller] Phase: ${room.phase}, Status: ${room.status}, SequenceID: ${seqId}`);
+
     if (room.phase === 'NIGHT_DUSK') {
       const seq = NARRATION_SEQUENCE['NIGHT_DUSK'];
       speak(seq.text, () => socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId }));
       return;
     }
 
-    const roleSeq = NARRATION_SEQUENCE[room.phase];
-    if (roleSeq && roleSeq.type === 'ACTION') {
-      speak(roleSeq.opening, () => setCanAct(true));
-      return;
-    }
-
     if (room.status === 'DAY' && room.phase === 'RESULTS') {
+      console.log(`[Narrator] Entering Results Announcement. Results:`, room.nightResults);
       const resultsText = room.nightResults.length === 0 
         ? '无人死亡：昨晚是平安夜' 
         : `有人死亡：昨晚死亡的是 ${room.nightResults.map(r => room.slots.findIndex(s => s?.name === r.name) + 1).join(', ')} 号玩家。`;
@@ -56,6 +53,13 @@ function GameView({ room, socket, role, countdown, onLeave }) {
               });
           }, 800);
       });
+      return;
+    }
+
+    const roleSeq = NARRATION_SEQUENCE[room.phase];
+    if (roleSeq && roleSeq.type === 'ACTION') {
+      speak(roleSeq.opening, () => setCanAct(true));
+      return;
     }
 
   }, [room.status, room.phase, room.currentSequenceId, room.id, socket, speak, NARRATION_SEQUENCE, room.nightResults, room.slots]);
@@ -79,7 +83,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
     const seq = NARRATION_SEQUENCE[room.phase];
     if (room.phase !== 'NIGHT_SEER' && seq && seq.closing) {
       setCanAct(false);
-      speak(seq.closing, () => socket.emit('advance_sequence', room.id));
+      speak(seq.closing, () => socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId }));
     }
     if (pendingAction.type === 'save' || pendingAction.type === 'poison') {
       socket.emit('witch_action', { roomId: room.id, action: pendingAction.type, targetId: pendingAction.targetId });
@@ -246,7 +250,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
               <p style={{ color: 'var(--text-dim)', marginBottom: '20px', fontSize: '0.8rem' }}>
                  (坏人仅限狼人角色)
               </p>
-              <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleSeerConfirm}>确认并闭眼</button>
+              <button className="btn btn-primary btn-action" style={{ width: '100%' }} onClick={handleSeerConfirm}>确认并闭眼</button>
            </div>
         </div>
       )}
