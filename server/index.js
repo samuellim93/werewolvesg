@@ -171,12 +171,16 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('room_update', room);
   }
 
-  socket.on('advance_sequence', (roomId) => {
+  socket.on('advance_sequence', ({ roomId, currentId }) => {
     const room = rooms[roomId];
     if (!room) return;
 
+    if (currentId !== room.currentSequenceId) {
+       console.log(`[Sequence Guard] Ignoring outdated/duplicate request. Client: ${currentId}, Server: ${room.currentSequenceId}`);
+       return;
+    }
+
     const seqMap = { '狼人': 'NIGHT_WEREWOLVES', '女巫': 'NIGHT_WITCH', '预言家': 'NIGHT_SEER', '猎人': 'NIGHT_HUNTER' };
-    const currentId = room.currentSequenceId;
     const nextRole = room.sequenceOrder[currentId - 1];
 
     if (nextRole) {

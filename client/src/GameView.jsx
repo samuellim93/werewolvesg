@@ -34,7 +34,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
 
     if (room.phase === 'NIGHT_DUSK') {
       const seq = NARRATION_SEQUENCE['NIGHT_DUSK'];
-      speak(seq.text, () => socket.emit('advance_sequence', room.id));
+      speak(seq.text, () => socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId }));
       return;
     }
 
@@ -95,10 +95,11 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       setCanAct(false);
       speak(seq.closing, () => {
           setVerifyResult(null);
-          socket.emit('advance_sequence', room.id);
+          socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
       });
     } else {
       setVerifyResult(null);
+      socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
     }
   };
 
@@ -111,9 +112,9 @@ function GameView({ room, socket, role, countdown, onLeave }) {
     const seq = NARRATION_SEQUENCE[room.phase];
     if (seq && seq.closing) {
       setCanAct(false);
-      speak(seq.closing, () => socket.emit('advance_sequence', room.id));
+      speak(seq.closing, () => socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId }));
     } else {
-      socket.emit('advance_sequence', room.id);
+      socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
     }
   };
 
@@ -132,7 +133,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
           <h4>狼人行动：请选择猎杀目标</h4>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
             {room.slots.filter(p => p && p.gameRole?.isAlive).map(p => (
-              <button key={p.id} className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', borderColor: p.gameRole?.name === '狼人' ? '#ff4444' : '' }} onClick={() => initiateAction('werewolf_kill', p)}>
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem', borderColor: p.gameRole?.name === '狼人' ? '#ff4444' : '' }} onClick={() => initiateAction('werewolf_kill', p)}>
                 击杀 #{room.slots.indexOf(p) + 1}
               </button>
             ))}
@@ -167,7 +168,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
           </div>
           <p style={{ fontSize: '0.9rem' }}>{victim ? `昨晚被杀的是：${room.slots.findIndex(s => s?.id === victim.id) + 1} 号。` : '昨晚是平安夜。'}</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
-            {canSave && !room.nightActions.saved && <button className="btn btn-primary" style={{ width: 'auto', minWidth: '150px' }} onClick={() => initiateAction('save', victim)}>使用救药</button>}
+            {canSave && !room.nightActions.saved && <button className="btn btn-primary btn-action" style={{ width: 'auto', minWidth: '150px' }} onClick={() => initiateAction('save', victim)}>使用救药</button>}
             <div style={{ textAlign: 'left' }}>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '8px' }}>毒杀目标：</p>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -196,7 +197,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
                 <strong style={{ color: 'var(--amber-glow)' }}> 可用</strong>
               )}
             </p>
-            <button className="btn btn-primary" style={{ width: 'auto', padding: '10px 40px' }} onClick={handleFinishTurn}>确认 (OK)</button>
+            <button className="btn btn-primary btn-action" style={{ width: 'auto', padding: '10px 40px' }} onClick={handleFinishTurn}>确认 (OK)</button>
           </div>
         );
     }
