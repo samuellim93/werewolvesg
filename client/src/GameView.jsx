@@ -12,12 +12,12 @@ function GameView({ room, socket, role, countdown, onLeave }) {
   const { speak, stopSpeech, NARRATION_SEQUENCE } = useNarrator();
   const lastSequenceRef = useRef(null);
   
+  const myPlayer = room.players.find(p => p.id === socket.id);
   const isStarting = room.status === 'STARTING';
   const isNight = room.status === 'NIGHT';
   const isCreator = room.creator === socket.id || myPlayer?.isCreator;
   const isSimulation = room.isSimulation;
   
-  const myPlayer = room.players.find(p => p.id === socket.id);
   const isAlive = myPlayer?.gameRole?.isAlive || myPlayer?.gameRole?.isIdiotRevealed;
   const canVote = isAlive && !myPlayer?.gameRole?.isIdiotRevealed;
   const hasGodMode = isSimulation && isCreator;
