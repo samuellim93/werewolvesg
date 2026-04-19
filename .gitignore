@@ -7,3 +7,6 @@ server/.env
 .DS_Store
 *.db
 *.db-journal
+
+# Local Netlify folder
+.netlify

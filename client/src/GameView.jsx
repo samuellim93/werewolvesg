@@ -14,7 +14,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
   
   const isStarting = room.status === 'STARTING';
   const isNight = room.status === 'NIGHT';
-  const isCreator = room.creator === socket.id;
+  const isCreator = room.creator === socket.id || myPlayer?.isCreator;
   const isSimulation = room.isSimulation;
   
   const myPlayer = room.players.find(p => p.id === socket.id);
@@ -24,6 +24,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
 
   // 🎙️ Sequence Narration Controller
   useEffect(() => {
+    console.log(`[GameView Logic] Status: ${room.status}, Phase: ${room.phase}, Countdown: ${countdown}`);
     if (room.status !== 'NIGHT' && room.status !== 'DAY') return;
 
     const seqId = room.currentSequenceId;
@@ -58,7 +59,8 @@ function GameView({ room, socket, role, countdown, onLeave }) {
 
     const roleSeq = NARRATION_SEQUENCE[room.phase];
     if (roleSeq && roleSeq.type === 'ACTION') {
-      speak(roleSeq.opening, () => setCanAct(true));
+      speak(roleSeq.opening);
+      setCanAct(true);
       return;
     }
 
@@ -127,8 +129,37 @@ function GameView({ room, socket, role, countdown, onLeave }) {
     socket.emit('end_game', room.id);
   };
 
+  const handleEnterNight = () => {
+    socket.emit('enter_night', room.id);
+  };
+
   const renderActions = () => {
     if (!isAlive && !myPlayer?.gameRole?.isIdiotRevealed && !hasGodMode) return <p style={{ color: '#ff4444' }}>你已被淘汰。</p>;
+
+    if (room.phase === 'ROLE_REVEAL') {
+      return (
+        <div style={{ textAlign: 'center', padding: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', gap: '15px' }}>
+             <h4 style={{ color: 'var(--amber-glow)', margin: 0 }}>身份确认阶段</h4>
+             <h2 className="pulse" style={{ color: (countdown || 30) <= 5 ? '#ff4444' : 'var(--amber-glow)', fontSize: '2.5rem', margin: '10px 0' }}>
+               {countdown || 30}s
+             </h2>
+             
+             {isCreator ? (
+               <div style={{ width: '100%' }}>
+                 <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem', marginBottom: '15px' }}>所有玩家准备就绪后，点击进入夜晚</p>
+                 <button className="btn btn-primary btn-action" style={{ width: '100%' }} onClick={handleEnterNight}>
+                   进入夜晚 (Enter Night)
+                 </button>
+               </div>
+             ) : (
+               <p style={{ color: 'var(--text-dim)', fontSize: '0.9rem', fontStyle: 'italic', marginTop: '10px' }}>等待房主开启夜晚...</p>
+             )}
+          </div>
+        </div>
+      );
+    }
+
     if (!canAct) return <p style={{ color: 'var(--amber-glow)', fontStyle: 'italic' }}>🎙️ 请听从旁白引导...</p>;
 
     if (room.phase === 'NIGHT_WEREWOLVES' && (role.name === '狼人' || hasGodMode)) {
@@ -209,6 +240,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
     return <p style={{ color: 'var(--text-dim)' }}>当前阶段：{room.phase || '等候入夜'}</p>;
   };
 
+
   return (
     <div className="card card-wide dashboard" style={{ position: 'relative' }}>
       {isSimulation && (
@@ -271,6 +303,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }} className="dashboard-header">
         <div style={{ textAlign: 'left' }}>
           <h2><span className="glow-text">{
+             room.phase === 'ROLE_REVEAL' ? '身份确认' :
              room.phase === 'NIGHT_DUSK' ? '入夜' :
              room.phase === 'NIGHT_WEREWOLVES' ? '狼人行动' : 
              room.phase === 'NIGHT_WITCH' ? '女巫行动' : 

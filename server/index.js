@@ -46,8 +46,8 @@ io.on('connection', (socket) => {
     console.log(`[Room Created] ID: ${roomId}, Mode: "${gameMode}", MaxPlayers: ${maxPlayers}`);
 
     rooms[roomId] = {
-      id: roomId, creator: socket.id, mode: gameMode,
-      players: [{ ...user, id: socket.id, ready: false, spot: 0 }],
+      id: roomId, creator: socket.id, creatorName: user.name, mode: gameMode,
+      players: [{ ...user, id: socket.id, ready: false, spot: 0, isCreator: true }],
       slots: new Array(maxPlayers).fill(null),
       maxPlayers, status: 'LOBBY', isSimulation: false, currentTimer: null,
       sequenceOrder: [...DEFAULT_SEQUENCE]
@@ -59,8 +59,20 @@ io.on('connection', (socket) => {
 
   socket.on('join_room', ({ roomId, user }) => {
     const room = rooms[roomId];
-    if (!room || room.players.length >= room.maxPlayers || room.status !== 'LOBBY') return;
-    if (!room.players.find(p => p.id === socket.id)) { room.players.push({ ...user, id: socket.id, ready: false, spot: null }); }
+    if (!room) return;
+    
+    const existing = room.players.find(p => p.name === user.name);
+    if (existing) {
+      existing.id = socket.id;
+      if (existing.name === room.creatorName) {
+        room.creator = socket.id;
+        existing.isCreator = true;
+      }
+    } else {
+      if (room.players.length >= room.maxPlayers || room.status !== 'LOBBY') return;
+      room.players.push({ ...user, id: socket.id, ready: false, spot: null, isCreator: user.name === room.creatorName });
+    }
+    
     socket.join(roomId);
     io.to(roomId).emit('room_update', room);
   });
@@ -131,14 +143,21 @@ io.on('connection', (socket) => {
 
   function triggerCountdown(roomId) {
     const room = rooms[roomId];
+    if (room.status === 'STARTING') return; // Guard against double trigger
+    
+    console.log(`[Countdown] Room: ${roomId} - Starting 10s Lobby Countdown`);
     room.status = 'STARTING';
     io.to(roomId).emit('room_update', room);
+    
     let countdown = 10;
-    const timer = setInterval(() => {
+    if (room.currentTimer) clearInterval(room.currentTimer);
+    
+    room.currentTimer = setInterval(() => {
       countdown--;
       io.to(roomId).emit('game_countdown', countdown);
       if (countdown <= 0) {
-        clearInterval(timer);
+        clearInterval(room.currentTimer);
+        room.currentTimer = null;
         assignRolesAndStart(roomId);
       }
     }, 1000);
@@ -146,7 +165,8 @@ io.on('connection', (socket) => {
 
   async function assignRolesAndStart(roomId) {
     const room = rooms[roomId];
-    if (!room) return;
+    if (!room || room.status === 'STARTED') return; // Guard against multiple calls
+    console.log(`[Transition] Room: ${roomId} - Assigning Roles & Entering REVEAL Phase`);
     const rolesMeta = await db.getRoles();
     
     let rolePool = [];
@@ -164,12 +184,55 @@ io.on('connection', (socket) => {
         if (!player.isMock) io.to(player.id).emit('assign_role', player.gameRole);
       }
     });
-    room.status = 'NIGHT';
-    room.currentSequenceId = 1; 
-    room.phase = 'NIGHT_DUSK';
+    room.status = 'STARTED';
+    room.phase = 'ROLE_REVEAL';
+    room.currentSequenceId = 0; 
     room.nightActions = { killed: null, verified: null, saved: false, poisoned: null };
     io.to(roomId).emit('room_update', room);
+
+    console.log(`[Reveal Phase] Room: ${roomId} - Status is now STARTED. Starting 30s Reveal Timer.`);
+
+    // Start 30s Reveal Countdown
+    if (room.currentTimer) clearInterval(room.currentTimer);
+    let revealCount = 30;
+    io.to(roomId).emit('game_countdown', revealCount);
+    
+    room.currentTimer = setInterval(() => {
+      revealCount--;
+      io.to(roomId).emit('game_countdown', revealCount);
+      if (revealCount <= 0) {
+        clearInterval(room.currentTimer);
+        room.currentTimer = null;
+        console.log(`[Reveal Phase] Room: ${roomId} - Countdown finished. Waiting for manual Enter Night by creator.`);
+      }
+    }, 1000);
   }
+
+  function startNight(roomId) {
+    const room = rooms[roomId];
+    if (!room || room.status === 'NIGHT') return; 
+    
+    console.log(`[Night Phase] Room: ${roomId} - Transitioning to NIGHT`);
+    room.status = 'NIGHT';
+    room.currentSequenceId = 1;
+    room.phase = 'NIGHT_DUSK';
+    io.to(roomId).emit('room_update', room);
+  }
+
+  socket.on('enter_night', (roomId) => {
+    const room = rooms[roomId];
+    if (!room || room.status !== 'STARTED') return;
+    
+    // Ensure only creator can start the night
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player || !player.isCreator) return;
+
+    if (room.currentTimer) {
+      clearInterval(room.currentTimer);
+      room.currentTimer = null;
+    }
+    startNight(roomId);
+  });
 
   socket.on('advance_sequence', ({ roomId, currentId }) => {
     const room = rooms[roomId];
