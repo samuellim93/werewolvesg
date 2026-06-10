@@ -1,20 +1,34 @@
 import React, { useState } from 'react';
+import CustomModeModal from './CustomModeModal';
 
-function Lobby({ user, onLogout, onCreateRoom, onJoinRoom }) {
+function Lobby({ user, onLogout, onCreateRoom, onJoinRoom, onOpenVotes }) {
   const [searchId, setSearchId] = useState('');
+  const [showCustomModal, setShowCustomModal] = useState(false);
 
   const GAME_MODES = [
     {
       id: 'pre-witch-hunter-idiot',
-      name: '预女猎白 · 标准 12 人场',
-      description: '最经典的竞技板子，博弈平衡性极佳。',
-      serverMode: '预女猎白'
+      name: '預女獵白 · 標準 12 人場',
+      description: '最經典的競技板子，博弈平衡性極佳。',
+      serverMode: '預女獵白'
+    },
+    {
+      id: 'wolf-king-dreamcatcher',
+      name: '狼王 & 攝夢人 · 12 人場',
+      description: '狼王帶隊，攝夢人守護夢境。',
+      serverMode: '狼王攝夢人'
+    },
+    {
+      id: 'mech-wolf-psychic',
+      name: '機械狼 vs 通女獵守 · 12 人場',
+      description: '機械狼學習技能，通靈師洞察真偽。',
+      serverMode: '機械狼通女獵守'
     },
     {
       id: 'pre-witch-hunter',
-      name: '预女猎 · 标准 9 人场',
-      description: '快节奏经典局，适合新老玩家快速上手。',
-      serverMode: '预女猎'
+      name: '預女獵 · 標準 9 人場',
+      description: '快節奏經典局，適合新老玩家快速上手。',
+      serverMode: '預女獵'
     }
   ];
 
@@ -25,7 +39,10 @@ function Lobby({ user, onLogout, onCreateRoom, onJoinRoom }) {
           <h1>古堡大厅</h1>
           <p style={{ color: 'var(--text-dim)' }}>欢迎回来, {user.name}</p>
         </div>
-        <button className="btn btn-secondary" style={{ width: 'auto', padding: '10px 20px' }} onClick={onLogout}>退出登录</button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn btn-secondary" style={{ width: 'auto', padding: '10px 20px' }} onClick={onOpenVotes}>Vote</button>
+          <button className="btn btn-secondary" style={{ width: 'auto', padding: '10px 20px' }} onClick={onLogout}>退出登录</button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '40px' }}>
@@ -44,6 +61,13 @@ function Lobby({ user, onLogout, onCreateRoom, onJoinRoom }) {
             />
             <button className="btn btn-secondary btn-fit" style={{ margin: 0 }} onClick={() => onJoinRoom(searchId)}>立即加入</button>
           </div>
+        </div>
+
+        {/* 🛠️ Custom Mode Section */}
+        <div className="card" style={{ background: 'rgba(255, 191, 0, 0.05)', borderColor: 'rgba(255, 191, 0, 0.3)', padding: '25px', width: '100%', maxWidth: 'none', display: 'flex', flexDirection: 'column', textAlign: 'center' }}>
+          <h3 style={{ color: 'var(--amber-glow)', marginBottom: '10px' }}>自定義模式</h3>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-dim)', marginBottom: '15px' }}>自由配置人數、角色與發言順序，打造專屬戰場</p>
+          <button className="btn btn-primary btn-fit" style={{ margin: '0 auto' }} onClick={() => setShowCustomModal(true)}>開啟自定義配置</button>
         </div>
 
         {/* 🃏 Game Modes Section (Now Below) */}
@@ -66,6 +90,15 @@ function Lobby({ user, onLogout, onCreateRoom, onJoinRoom }) {
         </div>
 
       </div>
+      {showCustomModal && (
+        <CustomModeModal 
+          onClose={() => setShowCustomModal(false)}
+          onCreateRoom={(mode, config) => {
+            setShowCustomModal(false);
+            onCreateRoom(mode, config);
+          }}
+        />
+      )}
     </div>
   );
 }

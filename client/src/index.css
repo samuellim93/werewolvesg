@@ -318,3 +318,107 @@ input:focus {
   justify-content: center;
   padding: 5px !important;
 }
+/* 🎭 Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start; /* Start from top */
+  padding: 60px 20px; /* Desktop top spacing */
+  z-index: 1000;
+  animation: fadeIn 0.3s ease-out;
+  overflow-y: auto; /* Allow overlay to scroll if modal is too tall */
+}
+
+.modal-container {
+  background: var(--stone-grey);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  width: 90%;
+  max-width: 700px;
+  max-height: none; /* Let the overlay handle the outer scroll */
+  position: relative;
+  padding: 30px;
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+  margin-bottom: 60px; /* Space at bottom after scrolling */
+}
+
+@media (max-width: 768px) {
+  .modal-overlay {
+    padding: 20px 10px; /* Tighter spacing on mobile */
+  }
+  .modal-container {
+    margin-bottom: 20px;
+  }
+}
+
+
+.role-chip {
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.role-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.role-chip.selected {
+  background: rgba(255, 191, 0, 0.15);
+  border-color: var(--amber-glow);
+  color: var(--amber-glow);
+}
+
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.sequence-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 15px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.pax-selector {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.pax-btn {
+  flex: 1;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.pax-btn.active {
+  background: var(--gold-gradient);
+  color: black;
+  border: none;
+}

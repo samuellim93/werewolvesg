@@ -1,30 +1,77 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import useNarrator from './useNarrator';
 
-function GameView({ room, socket, role, countdown, onLeave }) {
+const WOLF_GROUP_ROLES = ['狼人', '狼王', '狼美人', '白狼王', '惡靈騎士', '夢魘', '血月使徒'];
+
+const PlayerSlot = React.memo(({ index, player, socketId, hasGodMode, isVictim, isWolf, onClick }) => {
+  return (
+    <div 
+      className={`player-slot occupied ${player?.gameRole?.isAlive === false ? 'dead' : ''} ${player?.gameRole?.isIdiotRevealed ? 'ready' : ''} ${isVictim ? 'victim-pulse' : ''}`} 
+      onClick={onClick}
+      style={{ 
+        opacity: (!player || player?.gameRole?.isAlive === false) && !player?.gameRole?.isIdiotRevealed ? 0.3 : (player?.isOffline ? 0.4 : 1), 
+        border: isVictim ? '2px solid #ff4444' : (isWolf ? '1px solid #ff4444' : ''),
+        cursor: onClick ? 'pointer' : 'default'
+      }}
+    >
+      <div style={{ position: 'absolute', top: '5px', left: '8px', fontSize: '0.6rem', color: 'var(--text-dim)' }}>#{index + 1}</div>
+      {player ? (
+        <>
+          <div style={{ fontWeight: 'bold', fontSize: '1rem', color: player?.isOffline ? 'var(--text-dim)' : '#fff' }}>
+            {player.name} {player?.isOffline && <span style={{ color: '#ff4444', fontSize: '0.75rem', fontWeight: 'normal' }}>[离线]</span>}
+          </div>
+          {player.id === socketId && <div style={{ color: 'var(--amber-glow)', fontSize: '0.6rem' }}>[你]</div>}
+          {hasGodMode && player.gameRole && (
+            <div style={{ marginTop: '5px', background: 'rgba(255, 191, 0, 0.15)', padding: '2px 8px', borderRadius: '5px', border: '1px solid var(--amber-dim)', color: 'var(--amber-glow)', fontSize: '0.8rem', fontWeight: '600' }}>
+              {player.gameRole.name}
+            </div>
+          )}
+        </>
+      ) : (
+        <div style={{ color: 'rgba(255,255,255,0.05)', fontSize: '0.7rem' }}>空席</div>
+      )}
+    </div>
+  );
+});
+
+const TimerDisplay = React.memo(({ socket, initialCount = 30 }) => {
+  const [count, setCount] = useState(initialCount);
+
+  useEffect(() => {
+    socket.on('game_countdown', (c) => setCount(c));
+    return () => socket.off('game_countdown');
+  }, [socket]);
+
+  return (
+    <h2 className="pulse" style={{ color: count <= 5 ? '#ff4444' : 'var(--amber-glow)', fontSize: '2.5rem', margin: '10px 0' }}>
+      {count}s
+    </h2>
+  );
+});
+
+function GameView({ room, socket, role, onLeave, onOpenVotes }) {
   const [verifyResult, setVerifyResult] = useState(null);
   const [log, setLog] = useState(['• 游戏正式初始化。']);
   const [showRole, setShowRole] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
   const [canAct, setCanAct] = useState(false);
 
   const { speak, stopSpeech, NARRATION_SEQUENCE } = useNarrator();
   const lastSequenceRef = useRef(null);
   
-  const myPlayer = room.players.find(p => p.id === socket.id);
-  const isStarting = room.status === 'STARTING';
-  const isNight = room.status === 'NIGHT';
-  const isCreator = room.creator === socket.id || myPlayer?.isCreator;
-  const isSimulation = room.isSimulation;
+  const myPlayer = useMemo(() => room.players.find(p => p.id === socket.id), [room.players, socket.id]);
+  const isStarting = useMemo(() => room.status === 'STARTING', [room.status]);
+  const isNight = useMemo(() => room.status === 'NIGHT', [room.status]);
+  const isCreator = useMemo(() => room.creator === socket.id || myPlayer?.isCreator, [room.creator, socket.id, myPlayer?.isCreator]);
+  const isSimulation = useMemo(() => room.isSimulation, [room.isSimulation]);
   
-  const isAlive = myPlayer?.gameRole?.isAlive || myPlayer?.gameRole?.isIdiotRevealed;
-  const canVote = isAlive && !myPlayer?.gameRole?.isIdiotRevealed;
-  const hasGodMode = isSimulation && isCreator;
+  const isAlive = useMemo(() => myPlayer?.gameRole?.isAlive || myPlayer?.gameRole?.isIdiotRevealed, [myPlayer?.gameRole?.isAlive, myPlayer?.gameRole?.isIdiotRevealed]);
+  const canVote = useMemo(() => isAlive && !myPlayer?.gameRole?.isIdiotRevealed, [isAlive, myPlayer?.gameRole?.isIdiotRevealed]);
+  const hasGodMode = useMemo(() => isSimulation && isCreator, [isSimulation, isCreator]);
 
   // 🎙️ Sequence Narration Controller
   useEffect(() => {
-    console.log(`[GameView Logic] Status: ${room.status}, Phase: ${room.phase}, Countdown: ${countdown}`);
+    console.log(`[GameView Logic] Status: ${room.status}, Phase: ${room.phase}`);
     if (room.status !== 'NIGHT' && room.status !== 'DAY') return;
 
     const seqId = room.currentSequenceId;
@@ -80,41 +127,47 @@ function GameView({ room, socket, role, countdown, onLeave }) {
     setPendingAction(null);
   }, [room.phase]);
 
-  const confirmAction = () => {
+  const confirmAction = useCallback(() => {
     if (!pendingAction) return;
     const seq = NARRATION_SEQUENCE[room.phase];
-    if (room.phase !== 'NIGHT_SEER' && seq && seq.closing) {
+    const isVerifyPhase = ['NIGHT_SEER', 'NIGHT_PSYCHIC', 'NIGHT_GARGOYLE', 'NIGHT_MECHANICAL_WOLF'].includes(room.phase);
+    if (!isVerifyPhase && seq && seq.closing) {
       setCanAct(false);
       speak(seq.closing, () => socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId }));
     }
     if (pendingAction.type === 'save' || pendingAction.type === 'poison') {
       socket.emit('witch_action', { roomId: room.id, action: pendingAction.type, targetId: pendingAction.targetId });
+    } else if (pendingAction.type === 'knight_duel') {
+      socket.emit('knight_duel', { roomId: room.id, targetId: pendingAction.targetId });
     } else {
       socket.emit(pendingAction.type, { roomId: room.id, targetId: pendingAction.targetId });
     }
     setPendingAction(null);
-  };
+  }, [pendingAction, NARRATION_SEQUENCE, room.phase, room.id, room.currentSequenceId, socket, speak]);
 
-  const handleSeerConfirm = () => {
+  const handleVerifyConfirm = useCallback(() => {
+    setVerifyResult(null);
     const seq = NARRATION_SEQUENCE[room.phase];
     if (seq && seq.closing) {
       setCanAct(false);
       speak(seq.closing, () => {
-          setVerifyResult(null);
           socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
       });
     } else {
-      setVerifyResult(null);
       socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
     }
-  };
+  }, [NARRATION_SEQUENCE, room.phase, room.id, room.currentSequenceId, socket, speak]);
 
-  const initiateAction = (type, target) => {
+  const initiateAction = useCallback((type, target) => {
     const spotIndex = room.slots.findIndex(s => s?.id === target.id) + 1;
     setPendingAction({ type, targetId: target.id, targetName: target.name, targetSpot: spotIndex });
-  };
+  }, [room.slots]);
 
-  const handleFinishTurn = () => {
+  const initiateGuardSkip = useCallback(() => {
+    setPendingAction({ type: 'guard_protect', targetId: null, targetName: '不守護（空守）', targetSpot: null });
+  }, []);
+
+  const handleFinishTurn = useCallback(() => {
     const seq = NARRATION_SEQUENCE[room.phase];
     if (seq && seq.closing) {
       setCanAct(false);
@@ -122,16 +175,16 @@ function GameView({ room, socket, role, countdown, onLeave }) {
     } else {
       socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
     }
-  };
+  }, [NARRATION_SEQUENCE, room.phase, room.id, room.currentSequenceId, socket, speak]);
 
-  const handleEndGame = () => {
+  const handleEndGame = useCallback(() => {
     stopSpeech();
     socket.emit('end_game', room.id);
-  };
+  }, [socket, room.id, stopSpeech]);
 
-  const handleEnterNight = () => {
+  const handleEnterNight = useCallback(() => {
     socket.emit('enter_night', room.id);
-  };
+  }, [socket, room.id]);
 
   const renderActions = () => {
     if (!isAlive && !myPlayer?.gameRole?.isIdiotRevealed && !hasGodMode) return <p style={{ color: '#ff4444' }}>你已被淘汰。</p>;
@@ -141,9 +194,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
         <div style={{ textAlign: 'center', padding: '10px' }}>
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexDirection: 'column', gap: '15px' }}>
              <h4 style={{ color: 'var(--amber-glow)', margin: 0 }}>身份确认阶段</h4>
-             <h2 className="pulse" style={{ color: (countdown || 30) <= 5 ? '#ff4444' : 'var(--amber-glow)', fontSize: '2.5rem', margin: '10px 0' }}>
-               {countdown || 30}s
-             </h2>
+             <TimerDisplay socket={socket} initialCount={30} />
              
              {isCreator ? (
                <div style={{ width: '100%' }}>
@@ -162,14 +213,14 @@ function GameView({ room, socket, role, countdown, onLeave }) {
 
     if (!canAct) return <p style={{ color: 'var(--amber-glow)', fontStyle: 'italic' }}>🎙️ 请听从旁白引导...</p>;
 
-    if (room.phase === 'NIGHT_WEREWOLVES' && (role.name === '狼人' || hasGodMode)) {
+    if (room.phase === 'NIGHT_WEREWOLVES' && (WOLF_GROUP_ROLES.includes(role?.name) || hasGodMode)) {
       return (
         <div>
-          <h4>狼人行动：请选择猎杀目标</h4>
+          <h4>狼人行動：請選擇獵殺目標</h4>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
             {room.slots.filter(p => p && p.gameRole?.isAlive).map(p => (
               <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem', borderColor: p.gameRole?.name === '狼人' ? '#ff4444' : '' }} onClick={() => initiateAction('werewolf_kill', p)}>
-                击杀 #{room.slots.indexOf(p) + 1}
+                擊殺 #{room.slots.indexOf(p) + 1}
               </button>
             ))}
           </div>
@@ -177,15 +228,15 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       );
     }
 
-    if (room.phase === 'NIGHT_SEER' && (role?.name === '预言家' || hasGodMode)) {
+    if (room.phase === 'NIGHT_SEER' && (role?.name === '預言家' || hasGodMode)) {
       return (
         <div>
-          <h4>预言家行动：请选择验人目标</h4>
+          <h4>預言家行動：請選擇驗人目標</h4>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
             {room.slots.filter(p => p && p.gameRole?.isAlive).map(p => (
-              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('seer_verify', p)}>查验 #{room.slots.indexOf(p) + 1}</button>
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('seer_verify', p)}>查驗 #{room.slots.indexOf(p) + 1}</button>
             ))}
-            {hasGodMode && <button className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', opacity: 0.6 }} onClick={handleFinishTurn}>跳过</button>}
+            {hasGodMode && <button className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', opacity: 0.6 }} onClick={handleFinishTurn}>跳過</button>}
           </div>
         </div>
       );
@@ -198,14 +249,14 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       return (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <h4>女巫行动：</h4>
-            {hasGodMode && <button className="btn btn-secondary" style={{ width: 'auto', padding: '5px 10px', fontSize: '0.7rem' }} onClick={handleFinishTurn}>完成/无药</button>}
+            <h4>女巫行動：</h4>
+            {hasGodMode && <button className="btn btn-secondary" style={{ width: 'auto', padding: '5px 10px', fontSize: '0.7rem' }} onClick={handleFinishTurn}>完成/無藥</button>}
           </div>
-          <p style={{ fontSize: '0.9rem' }}>{victim ? `昨晚被杀的是：${room.slots.findIndex(s => s?.id === victim.id) + 1} 号。` : '昨晚是平安夜。'}</p>
+          <p style={{ fontSize: '0.9rem' }}>{victim ? `昨晚被殺的是：${room.slots.findIndex(s => s?.id === victim.id) + 1} 號。` : '昨晚是平安夜。'}</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '15px' }}>
-            {canSave && !room.nightActions.saved && <button className="btn btn-primary btn-action" style={{ width: 'auto', minWidth: '150px' }} onClick={() => initiateAction('save', victim)}>使用救药</button>}
+            {canSave && !room.nightActions.saved && <button className="btn btn-primary btn-action" style={{ width: 'auto', minWidth: '150px' }} onClick={() => initiateAction('save', victim)}>使用救藥</button>}
             <div style={{ textAlign: 'left' }}>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '8px' }}>毒杀目标：</p>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '8px' }}>毒殺目標：</p>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 {room.slots.filter(p => p && p.gameRole?.isAlive).map(p => (
                   <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('poison', p)}>#{room.slots.indexOf(p) + 1}</button>
@@ -217,27 +268,151 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       );
     }
 
-    if (room.phase === 'NIGHT_HUNTER' && (role.name === '猎人' || hasGodMode) ) {
-        const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '猎人') : myPlayer;
+    if (room.phase === 'NIGHT_HUNTER' && (role?.name === '獵人' || hasGodMode) ) {
+        const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '獵人') : myPlayer;
         const isPoisoned = room.nightActions.poisoned === targetPlayer?.id;
 
         return (
           <div>
-            <h4>猎人行动：</h4>
+            <h4>獵人行動：</h4>
             <p style={{ marginBottom: '15px', fontSize: '0.9rem' }}>
-              你的技能状态：
+              你的技能狀態：
               {isPoisoned ? (
                 <strong style={{ color: '#ff4444' }}> 不可用</strong>
               ) : (
                 <strong style={{ color: 'var(--amber-glow)' }}> 可用</strong>
               )}
             </p>
-            <button className="btn btn-primary btn-action" style={{ width: 'auto', padding: '10px 40px' }} onClick={handleFinishTurn}>确认 (OK)</button>
+            <button className="btn btn-primary btn-action" style={{ width: 'auto', padding: '10px 40px' }} onClick={handleFinishTurn}>確認 (OK)</button>
           </div>
         );
     }
 
-    return <p style={{ color: 'var(--text-dim)' }}>当前阶段：{room.phase || '等候入夜'}</p>;
+    // --- New Role Actions ---
+
+    if (room.phase === 'NIGHT_GUARD' && (role?.name === '守衛' || hasGodMode)) {
+      return (
+        <div>
+          <h4>守衛行動：請選擇守護目標</h4>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+            {room.slots.map((p, i) => p && p.gameRole?.isAlive && (
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('guard_protect', p)}>
+                守護 #{i + 1}
+              </button>
+            ))}
+            <button className="btn btn-secondary" style={{ width: 'auto', borderColor: 'var(--amber-glow)', fontSize: '0.9rem' }} onClick={initiateGuardSkip}>
+              不守護 (空守)
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (room.phase === 'NIGHT_MAGICIAN' && (role?.name === '魔術師' || hasGodMode)) {
+      return (
+        <div>
+          <h4>魔術師行動：請選擇兩名玩家交換</h4>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>點擊玩家頭像選擇，然後點擊確認。</p>
+          <button className="btn btn-primary btn-action" style={{ marginTop: '10px' }} onClick={handleFinishTurn}>確認交換</button>
+        </div>
+      );
+    }
+
+    if (room.phase === 'NIGHT_DREAMCATCHER' && (role?.name === '攝夢人' || hasGodMode)) {
+      return (
+        <div>
+          <h4>攝夢人行動：請選擇攝夢目標</h4>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+            {room.slots.map((p, i) => p && p.gameRole?.isAlive && (
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('dream_link', p)}>
+                攝夢 #{i + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if ((room.phase === 'NIGHT_PSYCHIC' && (role?.name === '通靈師' || hasGodMode)) || (room.phase === 'NIGHT_GARGOYLE' && (role?.name === '石像鬼' || hasGodMode))) {
+      return (
+        <div>
+          <h4>{role?.name || '查驗'}行動：請選擇查驗目標</h4>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+            {room.slots.map((p, i) => p && p.gameRole?.isAlive && (
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('psychic_verify', p)}>
+                查驗 #{i + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (room.phase === 'NIGHT_NIGHTMARE' && (role?.name === '夢魘' || hasGodMode)) {
+      return (
+        <div>
+          <h4>夢魘行動：請選擇恐懼目標</h4>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+            {room.slots.map((p, i) => p && p.gameRole?.isAlive && (
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('nightmare_fear', p)}>
+                恐懼 #{i + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (room.phase === 'NIGHT_MECHANICAL_WOLF' && (role?.name === '機械狼' || hasGodMode)) {
+      return (
+        <div>
+          <h4>機械狼行動：請選擇學習目標</h4>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+            {room.slots.map((p, i) => p && p.gameRole?.isAlive && (
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('mech_learn', p)}>
+                學習 #{i + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (room.phase === 'NIGHT_DEMON_HUNTER' && (role?.name === '獵魔人' || hasGodMode)) {
+      return (
+        <div>
+          <h4>獵魔人行動：請選擇狩獵目標</h4>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+            {room.slots.map((p, i) => p && p.gameRole?.isAlive && (
+              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem' }} onClick={() => initiateAction('hunter_hunt', p)}>
+                狩獵 #{i + 1}
+              </button>
+            ))}
+            <button className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', opacity: 0.6 }} onClick={handleFinishTurn}>跳過</button>
+          </div>
+        </div>
+      );
+    }
+
+    if (room.status === 'DAY' && room.phase !== 'RESULTS') {
+      if ((role?.name === '騎士' || hasGodMode) && isAlive) {
+        return (
+          <div>
+            <h4>騎士行動：發動決鬥</h4>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+              {room.slots.map((p, i) => p && p.id !== (hasGodMode ? '' : socket.id) && p.gameRole?.isAlive && (
+                <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem', borderColor: 'var(--amber-glow)' }} onClick={() => initiateAction('knight_duel', p)}>
+                  與 #{i + 1} 決鬥
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      }
+      return <p style={{ color: 'var(--amber-glow)' }}>白天討論中... 請點擊玩家頭像查看詳情或投票。</p>;
+    }
+
+    return <p style={{ color: 'var(--text-dim)' }}>當前階段：{room.phase || '等候入夜'}</p>;
   };
 
 
@@ -254,7 +429,7 @@ function GameView({ room, socket, role, countdown, onLeave }) {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', zIndex: 3000, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
           <div className="card" style={{ width: '100%', maxWidth: '400px', border: '1px solid var(--amber-glow)', textAlign: 'center' }}>
             <h2 className="glow-text">{role.name}</h2>
-            <div style={{ margin: '20px 0', textAlign: 'left' }}>
+            <div style={{ margin: '20px 0', textAlign: 'left', maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
                <p style={{ color: role.alignment === 'Bad' ? '#ff4444' : 'var(--amber-glow)', fontWeight: 'bold', marginBottom: '10px' }}>
                  阵营：{role.alignment === 'Bad' ? '狼人阵营 (Bad)' : '好人阵营 (Good)'}
                </p>
@@ -272,17 +447,17 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       {verifyResult && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.95)', zIndex: 2000, display: 'flex', justifyContent: 'center', alignItems: 'center', borderRadius: '20px', padding: '20px' }}>
            <div className="card" style={{ width: '100%', maxWidth: '350px', border: '2px solid var(--amber-glow)', textAlign: 'center' }}>
-              <h2 className="glow-text">查验结果</h2>
+              <h2 className="glow-text">{room.phase === 'NIGHT_MECHANICAL_WOLF' ? '学习结果' : '查验结果'}</h2>
               <p style={{ fontSize: '1.1rem', margin: '15px 0' }}>
-                 玩家 {verifyResult.name} 的身份为：
+                 {room.phase === 'NIGHT_MECHANICAL_WOLF' ? `你成功学习了 ${verifyResult.name} 的技能：` : `玩家 ${verifyResult.name} 的身份为：`}
               </p>
               <h1 style={{ color: verifyResult.alignment === 'Bad' ? '#ff4444' : 'var(--amber-glow)', fontSize: '2.5rem', margin: '10px 0' }}>
-                 {verifyResult.alignment === 'Bad' ? '坏人' : '好人'}
+                 {verifyResult.roleName ? verifyResult.roleName : (verifyResult.alignment === 'Bad' ? '坏人' : '好人')}
               </h1>
               <p style={{ color: 'var(--text-dim)', marginBottom: '20px', fontSize: '0.8rem' }}>
-                 (坏人仅限狼人角色)
+                 {verifyResult.roleName ? `(具体身份阵营：${verifyResult.alignment === 'Bad' ? '坏人' : '好人'})` : '(坏人仅限狼人角色)'}
               </p>
-              <button className="btn btn-primary btn-action" style={{ width: '100%' }} onClick={handleSeerConfirm}>确认并闭眼</button>
+              <button className="btn btn-primary btn-action" style={{ width: '100%' }} onClick={handleVerifyConfirm}>确认并闭眼</button>
            </div>
         </div>
       )}
@@ -291,7 +466,9 @@ function GameView({ room, socket, role, countdown, onLeave }) {
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center', borderRadius: '20px', padding: '20px' }}>
           <div className="card" style={{ width: '100%', maxWidth: '320px', border: '1px solid var(--amber-glow)' }}>
             <h3 style={{ color: 'var(--amber-glow)', marginBottom: '15px' }}>确认行动</h3>
-            <p style={{ fontSize: '0.9rem' }}>确定对 #{pendingAction.targetSpot} 玩家执行操作？</p>
+            <p style={{ fontSize: '0.9rem' }}>
+              {pendingAction.targetId === null ? '确定选择不守护任何人（空守）？' : `确定对 #${pendingAction.targetSpot} 玩家执行操作？`}
+            </p>
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
               <button className="btn btn-primary" onClick={confirmAction}>确定</button>
               <button className="btn btn-secondary" onClick={() => setPendingAction(null)}>取消</button>
@@ -314,8 +491,8 @@ function GameView({ room, socket, role, countdown, onLeave }) {
           <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>房号 {room.id}</p>
         </div>
         <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+          <button className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', borderColor: 'var(--text-dim)', margin: 0 }} onClick={onOpenVotes}>Vote</button>
           {isSimulation && isCreator && <button className="btn btn-primary" style={{ width: 'auto', background: '#ff4444', border: 'none', padding: '8px 12px', margin: 0 }} onClick={handleEndGame}>🛑 结束</button>}
-          <button className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', borderColor: 'var(--text-dim)', margin: 0 }} onClick={() => setShowGuide(true)}>📖 规则</button>
           <span className="reveal-link" style={{ fontSize: '0.9rem' }} onClick={() => setShowRole(true)}>Reveal</span>
         </div>
       </div>
@@ -323,24 +500,17 @@ function GameView({ room, socket, role, countdown, onLeave }) {
       <div className="player-grid">
         {room.slots.map((p, index) => {
           const isVictim = room.nightActions?.killed === p?.id && room.phase === 'NIGHT_WITCH' && (role?.name === '女巫' || hasGodMode);
-          const isWolf = role?.name === '狼人' && p?.gameRole?.name === '狼人';
+          const isWolf = WOLF_GROUP_ROLES.includes(role?.name) && WOLF_GROUP_ROLES.includes(p?.gameRole?.name);
           return (
-            <div key={index} className={`player-slot occupied ${p?.gameRole?.isAlive === false ? 'dead' : ''} ${p?.gameRole?.isIdiotRevealed ? 'ready' : ''} ${isVictim ? 'victim-pulse' : ''}`} style={{ opacity: (!p || p?.gameRole?.isAlive === false) && !p?.gameRole?.isIdiotRevealed ? 0.3 : 1, border: isVictim ? '2px solid #ff4444' : (isWolf ? '1px solid #ff4444' : '') }}>
-              <div style={{ position: 'absolute', top: '5px', left: '8px', fontSize: '0.6rem', color: 'var(--text-dim)' }}>#{index + 1}</div>
-              {p ? (
-                <>
-                  <div style={{ fontWeight: 'bold', fontSize: '1rem', color: '#fff' }}>{p.name}</div>
-                  {p.id === socket.id && <div style={{ color: 'var(--amber-glow)', fontSize: '0.6rem' }}>[你]</div>}
-                  {hasGodMode && p.gameRole && (
-                    <div style={{ marginTop: '5px', background: 'rgba(255, 191, 0, 0.15)', padding: '2px 8px', borderRadius: '5px', border: '1px solid var(--amber-dim)', color: 'var(--amber-glow)', fontSize: '0.8rem', fontWeight: '600' }}>
-                      {p.gameRole.name}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div style={{ color: 'rgba(255,255,255,0.05)', fontSize: '0.7rem' }}>空席</div>
-              )}
-            </div>
+            <PlayerSlot 
+              key={index}
+              index={index}
+              player={p}
+              socketId={socket.id}
+              hasGodMode={hasGodMode}
+              isVictim={isVictim}
+              isWolf={isWolf}
+            />
           );
         })}
       </div>
@@ -349,32 +519,9 @@ function GameView({ room, socket, role, countdown, onLeave }) {
         {renderActions()}
       </div>
 
-      <div style={{ marginTop: '15px', textAlign: 'left' }}>
-        <h4 style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>古堡纪录</h4>
-        <div style={{ height: '60px', overflowY: 'auto', background: 'rgba(0,0,0,0.2)', padding: '8px', borderRadius: '10px', fontSize: '0.7rem' }}>
-          {log.map((entry, i) => <p key={i}>{entry}</p>)}
-        </div>
-      </div>
+      {/* Log section removed */}
 
-      {showGuide && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
-          <div className="card" style={{ maxWidth: '500px' }}>
-            <h2>游戏规则：{room.mode === '预女猎' ? '预女猎' : '预女猎白'}</h2>
-            <div style={{ textAlign: 'left', marginTop: '20px', maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
-              <p><strong>狼人杀 ({room.mode === '预女猎' ? '预女猎' : '预女猎白'})</strong> 是标准的 {room.maxPlayers} 人板子：</p>
-              <ul style={{ paddingLeft: '20px', marginTop: '10px', color: 'var(--text-dim)', lineHeight: '1.6' }}>
-                <li><strong>狼人 ({room.mode === '预女猎' ? 3 : 4}名)：</strong> 每晚可以杀害一名玩家。</li>
-                <li><strong>预言家 (1名)：</strong> 每晚可以查验一名玩家的身份（好人/坏人）。</li>
-                <li><strong>女巫 (1名)：</strong> 拥有一瓶灵药（救人）和一瓶毒药（杀人），每种只能使用一次。</li>
-                <li><strong>猎人 (1名)：</strong> 被杀或被投出且未被毒死时，可以开枪带走一名玩家。</li>
-                {room.mode !== '预女猎' && <li><strong>白痴 (1名)：</strong> 被投票出局时可以翻牌免死，但失去投票权。</li>}
-                <li><strong>平民 ({room.mode === '预女猎' ? 3 : 4}名)：</strong> 无特殊能力，通过分析推理找出狼人。</li>
-              </ul>
-            </div>
-            <button className="btn btn-primary" style={{ marginTop: '20px' }} onClick={() => setShowGuide(false)}>我明白了</button>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 import Lobby from './Lobby';
 import Room from './Room';
+import VoteNotes from './VoteNotes';
 import GameView from './GameView';
 import './index.css';
 
@@ -19,20 +20,20 @@ function App() {
   
   // Game States
   const [role, setRole] = useState(null);
-  const [countdown, setCountdown] = useState(null);
+  const [voteNotes, setVoteNotes] = useState([{ day: 1, text: '' }]);
+  const [showVoteNotes, setShowVoteNotes] = useState(false);
 
   useEffect(() => {
     socket.on('login_success', (data) => {
       setUserData(data);
       setIsLoggedIn(true);
+      setUsername('');
+      setPassword('');
+      setGuestName('');
     });
 
     socket.on('room_update', (room) => {
       setCurrentRoom(room);
-    });
-
-    socket.on('game_countdown', (count) => {
-      setCountdown(count);
     });
 
     socket.on('assign_role', (roleData) => {
@@ -47,7 +48,6 @@ function App() {
     return () => {
       socket.off('login_success');
       socket.off('room_update');
-      socket.off('game_countdown');
       socket.off('assign_role');
       socket.off('error');
     };
@@ -67,12 +67,19 @@ function App() {
     }
   };
 
-  const createRoom = (mode = '预女猎白') => {
-    socket.emit('create_room', { user: userData, mode });
+  const createRoom = (mode = '預女獵白', config = null) => {
+    socket.emit('create_room', { user: userData, mode, config });
   };
 
   const joinRoom = (roomId) => {
     socket.emit('join_room', { roomId, user: userData });
+  };
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setUserData(null);
+    setCurrentRoom(null);
+    setRole(null);
   };
 
   const leaveRoom = () => {
@@ -80,7 +87,6 @@ function App() {
       socket.emit('leave_room', currentRoom.id);
       setCurrentRoom(null);
       setRole(null);
-      setCountdown(null);
     }
   };
 
@@ -103,10 +109,9 @@ function App() {
   if (!isLoggedIn) {
     return (
       <div className="card">
-        <h2>The Night Castle</h2>
-        <p style={{ color: 'var(--text-dim)', fontSize: '0.9rem', marginBottom: '20px' }}>
-          Enter the realm to proceed
-        </p>
+        <div style={{ textAlign: 'center', marginBottom: '30px' }}>
+          <img src="/logo.png" alt="Wolf Logo" style={{ width: '100%', maxWidth: '400px', height: 'auto', filter: 'drop-shadow(0 0 15px rgba(255, 68, 68, 0.3))' }} />
+        </div>
 
         <div className="tabs">
           <div className={`tab ${activeTab === 'login' ? 'active' : ''}`} onClick={() => setActiveTab('login')}>Member</div>
@@ -159,17 +164,26 @@ function App() {
             onLeave={leaveRoom} 
             onToggleReady={toggleReady} 
             onStart={handleStartGame}
+            onOpenVotes={() => setShowVoteNotes(true)}
           />
         ) : (
           <GameView 
             room={currentRoom} 
             socket={socket} 
             role={role} 
-            countdown={countdown} 
+            onOpenVotes={() => setShowVoteNotes(true)}
           />
         )
       ) : (
-        <Lobby user={userData} socket={socket} onCreateRoom={createRoom} onJoinRoom={joinRoom} />
+        <Lobby user={userData} socket={socket} onCreateRoom={createRoom} onJoinRoom={joinRoom} onLogout={handleLogout} onOpenVotes={() => setShowVoteNotes(true)} />
+      )}
+
+      {showVoteNotes && (
+        <VoteNotes 
+          notes={voteNotes} 
+          setNotes={setVoteNotes} 
+          onClose={() => setShowVoteNotes(false)} 
+        />
       )}
     </div>
   );

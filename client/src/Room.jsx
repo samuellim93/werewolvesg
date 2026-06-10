@@ -1,31 +1,152 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 
-function Room({ room, socket, onLeave, onToggleReady, onStart }) {
+const ROLE_DESCRIPTIONS = {
+  '狼人': '每晚可以共同睜眼殺死任意一名玩家。',
+  '狼王': '屬於狼人陣營，出局後可以開槍帶走一名玩家（被毒死或自爆除外）。',
+  '機械狼': '屬於狼人陣營，不與狼人相認，每晚可以學習一名存活玩家的技能。',
+  '夢魘': '每晚在進入狼人階段前先行發動恐懼，封鎖該玩家當晚技能。',
+  '石像鬼': '每天晚上能查驗一人，確切知道該名玩家身分牌。不與狼人碰面，直到其他狼人全出局。',
+  '預言家': '每晚可以查驗一位玩家的真實身份陣營（好人/壞人）。',
+  '通靈師': '每晚可以查驗一名玩家的具体身份（查驗到機械狼時顯示其學習的技能）。',
+  '女巫': '擁有一瓶靈藥（救人）和一瓶毒藥（殺人），每種只能使用一次，不能自救。',
+  '獵人': '被殺或被投出且未被毒死時，可以開槍帶走一名玩家。',
+  '守衛': '每晚可以守護一名玩家免受狼人殺害，不能連續兩晚守護同一人，同守同救會造成「奶穿」死亡。',
+  '攝夢人': '每晚攝入一名玩家夢境，使其免疫當晚傷害，但連續兩晚攝入同一人或攝夢人出局時，該玩家會死亡。',
+  '白痴': '被投票放逐時可以翻牌免死，保留發言權但失去投票權。',
+  '平民': '沒有任何特殊功能的普通村民，白天投票放逐狼人。',
+  '魔術師': '每天晚上可以選擇兩名玩家進行技能互換，每人每局只能被交換一次。',
+  '獵魔人': '第二個晚上開始可以進行狩獵，若獵到狼人則狼人死亡，若獵到好人則自己死亡。免疫毒藥。',
+  '守墓人': '第二晚起能得知上一白天被放逐玩家所屬陣營（好人/狼人）。',
+  '騎士': '白天發言階段可以公佈身份並選擇一名玩家決鬥，若對方是狼則斬殺並直接入夜，否則騎士以死謝罪。'
+};
+
+const LobbyPlayerSlot = React.memo(({ index, player, socketId, creatorId, onClick }) => {
+  return (
+    <div 
+      className={`player-slot ${player ? 'occupied' : ''} ${player?.ready ? 'ready' : ''}`}
+      onClick={onClick}
+      style={{ cursor: !player ? 'pointer' : 'default', opacity: player?.isOffline ? 0.4 : 1 }}
+    >
+      <div style={{ position: 'absolute', top: '5px', left: '8px', fontSize: '0.6rem', color: 'var(--text-dim)' }}>#${index + 1}</div>
+      {player ? (
+        <>
+          <div style={{ fontWeight: 'bold', color: player?.isOffline ? 'var(--text-dim)' : '#fff' }}>
+            {player.name} {player?.isOffline && <span style={{ color: '#ff4444', fontSize: '0.75rem', fontWeight: 'normal' }}>[离线]</span>}
+          </div>
+          {player.id === creatorId && <div className="creator-marker">房主</div>}
+          {player.ready && <div className="ready-badge">READY</div>}
+          {player.id === socketId && <div style={{ color: 'var(--amber-glow)', fontSize: '0.6rem' }}>[你]</div>}
+        </>
+      ) : (
+        <div style={{ color: 'rgba(255,255,255,0.05)', fontSize: '0.8rem' }}>点击占位...</div>
+      )}
+    </div>
+  );
+});
+
+function Room({ room, socket, onLeave, onToggleReady, onStart, onOpenVotes }) {
   const [showGuide, setShowGuide] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
-  const isCreator = room.creator === socket.id;
-  const readyCount = room.players.filter(p => p.ready).length;
-  const canStart = readyCount === room.players.length && room.players.length >= 1; 
+  
+  const isCreator = useMemo(() => room.creator === socket.id, [room.creator, socket.id]);
+  const readyCount = useMemo(() => room.players.filter(p => p.ready).length, [room.players]);
+  const canStart = useMemo(() => readyCount === room.players.length && room.players.length >= 1, [readyCount, room.players.length]); 
 
-  const [sequence, setSequence] = useState(room.sequenceOrder || ['狼人', '女巫', '预言家', '猎人']);
+  const [sequence, setSequence] = useState(room.sequenceOrder || ['狼人', '女巫', '預言家', '獵人']);
 
-  const moveRole = (index, direction) => {
+  useEffect(() => {
+    if (room.sequenceOrder) {
+      setSequence(room.sequenceOrder);
+    }
+  }, [room.sequenceOrder]);
+
+  const getRulesData = useMemo(() => {
+    let modeTitle = '';
+    let introText = '';
+    let rolesList = [];
+
+    if (room.mode === '預女獵') {
+      modeTitle = '預女獵 · 標準 9 人場';
+      introText = `狼人殺 (預女獵) 是標準的 9 人板子：`;
+      rolesList = [
+        { name: '狼人', count: 3 },
+        { name: '預言家', count: 1 },
+        { name: '女巫', count: 1 },
+        { name: '獵人', count: 1 },
+        { name: '平民', count: 3 }
+      ];
+    } else if (room.mode === '狼王攝夢人') {
+      modeTitle = '狼王 & 攝夢人 · 12 人場';
+      introText = `狼人殺 (狼王 & 攝夢人) 是標準的 12 人板子：`;
+      rolesList = [
+        { name: '狼人', count: 3 },
+        { name: '狼王', count: 1 },
+        { name: '預言家', count: 1 },
+        { name: '女巫', count: 1 },
+        { name: '獵人', count: 1 },
+        { name: '攝夢人', count: 1 },
+        { name: '平民', count: 4 }
+      ];
+    } else if (room.mode === '機械狼通女獵守') {
+      modeTitle = '機械狼 vs 通女獵守 · 12 人場';
+      introText = `狼人殺 (機械狼 vs 通女獵守) 是標準的 12 人板子：`;
+      rolesList = [
+        { name: '狼人', count: 3 },
+        { name: '機械狼', count: 1 },
+        { name: '通靈師', count: 1 },
+        { name: '女巫', count: 1 },
+        { name: '獵人', count: 1 },
+        { name: '守衛', count: 1 },
+        { name: '平民', count: 4 }
+      ];
+    } else if (room.mode === 'CUSTOM') {
+      modeTitle = '自定義配置模式';
+      introText = `自定義 ${room.maxPlayers} 人自定義角色配置：`;
+      
+      const counts = {};
+      if (room.customConfig?.rolePool) {
+        room.customConfig.rolePool.forEach(role => {
+          counts[role] = (counts[role] || 0) + 1;
+        });
+      }
+      rolesList = Object.entries(counts).map(([name, count]) => ({ name, count }));
+    } else {
+      modeTitle = '預女獵白 · 標準 12 人場';
+      introText = `狼人殺 (預女獵白) 是標準 of 12 人板子：`;
+      rolesList = [
+        { name: '狼人', count: 4 },
+        { name: '預言家', count: 1 },
+        { name: '女巫', count: 1 },
+        { name: '獵人', count: 1 },
+        { name: '白痴', count: 1 },
+        { name: '平民', count: 4 }
+      ];
+    }
+
+    return { modeTitle, introText, rolesList };
+  }, [room]);
+
+  const { modeTitle, introText, rolesList } = getRulesData;
+
+  const moveRole = useCallback((index, direction) => {
     const newSeq = [...sequence];
     const targetIndex = index + direction;
     if (targetIndex < 0 || targetIndex >= newSeq.length) return;
     [newSeq[index], newSeq[targetIndex]] = [newSeq[targetIndex], newSeq[index]];
     setSequence(newSeq);
-  };
+  }, [sequence]);
 
-  const applyConfig = () => {
+  const applyConfig = useCallback(() => {
     socket.emit('update_room_config', { roomId: room.id, sequenceOrder: sequence });
     setShowConfig(false);
-  };
+  }, [socket, room.id, sequence]);
 
-  const handleSelectSpot = (index) => {
+  const handleSelectSpot = useCallback((index) => {
     if (room.slots[index]) return;
     socket.emit('select_spot', { roomId: room.id, spotIndex: index });
-  };
+  }, [socket, room.id, room.slots]);
+
+  const myPlayer = useMemo(() => room.players.find(p => p.id === socket.id), [room.players, socket.id]);
 
   return (
     <div className="card card-wide dashboard">
@@ -36,14 +157,14 @@ function Room({ room, socket, onLeave, onToggleReady, onStart }) {
             <div className="tabs">
               <div className="tab active">叙事顺序 (Sequence)</div>
             </div>
-            <div style={{ textAlign: 'left', marginBottom: '20px' }}>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '15px' }}>拖动或点击箭头调整夜晚角色行动顺序：</p>
+            <div style={{ textAlign: 'left', marginBottom: '20px', maxHeight: '300px', overflowY: 'auto', paddingRight: '10px' }}>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '15px' }}>拖動或點擊箭頭調整夜晚角色行動順序：</p>
               {sequence.map((roleName, idx) => (
-                <div key={roleName} className="player-slot occupied" style={{ flexDirection: 'row', justifyContent: 'space-between', padding: '10px 15px', marginBottom: '8px', minHeight: 'auto' }}>
-                  <span style={{ fontWeight: 'bold' }}>{idx + 1}. {roleName}</span>
+                <div key={roleName} className="player-slot occupied" style={{ flexDirection: 'row', justifyContent: 'space-between', padding: '6px 12px', marginBottom: '6px', minHeight: 'auto' }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{idx + 1}. {roleName}</span>
                   <div style={{ display: 'flex', gap: '5px' }}>
-                    <button className="btn btn-secondary" style={{ width: '30px', padding: '5px', margin: 0 }} onClick={() => moveRole(idx, -1)} disabled={idx === 0}>↑</button>
-                    <button className="btn btn-secondary" style={{ width: '30px', padding: '5px', margin: 0 }} onClick={() => moveRole(idx, 1)} disabled={idx === sequence.length - 1}>↓</button>
+                    <button className="btn btn-secondary" style={{ width: '28px', height: '28px', padding: '0', margin: 0, fontSize: '0.8rem' }} onClick={() => moveRole(idx, -1)} disabled={idx === 0}>↑</button>
+                    <button className="btn btn-secondary" style={{ width: '28px', height: '28px', padding: '0', margin: 0, fontSize: '0.8rem' }} onClick={() => moveRole(idx, 1)} disabled={idx === sequence.length - 1}>↓</button>
                   </div>
                 </div>
               ))}
@@ -70,40 +191,41 @@ function Room({ room, socket, onLeave, onToggleReady, onStart }) {
                </button>
              )}
           </div>
-          <p style={{ color: 'var(--text-dim)' }}>模式：{room.mode === '预女猎' ? '预女猎 · 标准 9 人场' : '预女猎白 · 标准 12 人场'}</p>
+          <p style={{ color: 'var(--text-dim)' }}>
+            模式：{
+              room.mode === '預女獵' ? '預女獵 · 標準 9 人場' : 
+              room.mode === '狼王攝夢人' ? '狼王 & 攝夢人 · 12 人場' : 
+              room.mode === '機械狼通女獵守' ? '機械狼 vs 通女獵守 · 12 人場' : 
+              room.mode === 'CUSTOM' ? '自定義配置模式' : 
+              '預女獵白 · 標準 12 人場'
+            }
+          </p>
         </div>
-        <button className="btn btn-secondary" style={{ width: 'auto', padding: '10px 20px', borderColor: 'var(--text-dim)' }} onClick={onLeave}>退出房间</button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn btn-secondary" style={{ width: 'auto', padding: '10px 20px', borderColor: 'var(--text-dim)' }} onClick={onOpenVotes}>Vote</button>
+          <button className="btn btn-secondary" style={{ width: 'auto', padding: '10px 20px', borderColor: 'var(--text-dim)' }} onClick={onLeave}>退出房间</button>
+        </div>
       </div>
 
       <div className="player-grid">
         {room.slots.map((player, index) => (
-          <div 
-            key={index} 
-            className={`player-slot ${player ? 'occupied' : ''} ${player?.ready ? 'ready' : ''}`}
+          <LobbyPlayerSlot 
+            key={index}
+            index={index}
+            player={player}
+            socketId={socket.id}
+            creatorId={room.creator}
             onClick={() => handleSelectSpot(index)}
-            style={{ cursor: !player ? 'pointer' : 'default' }}
-          >
-            <div style={{ position: 'absolute', top: '5px', left: '8px', fontSize: '0.6rem', color: 'var(--text-dim)' }}>#{index + 1}</div>
-            {player ? (
-              <>
-                <div style={{ fontWeight: 'bold' }}>{player.name}</div>
-                {player.id === room.creator && <div className="creator-marker">房主</div>}
-                {player.ready && <div className="ready-badge">READY</div>}
-                {player.id === socket.id && <div style={{ color: 'var(--amber-glow)', fontSize: '0.6rem' }}>[你]</div>}
-              </>
-            ) : (
-              <div style={{ color: 'rgba(255,255,255,0.05)', fontSize: '0.8rem' }}>点击占位...</div>
-            )}
-          </div>
+          />
         ))}
       </div>
 
       <div style={{ display: 'flex', gap: '20px', marginTop: '30px', justifyContent: 'center' }} className="dashboard-header">
         <button 
-          className={`btn btn-fit ${room.players.find(p => p.id === socket.id)?.ready ? 'btn-secondary' : 'btn-primary'}`}
+          className={`btn btn-fit ${myPlayer?.ready ? 'btn-secondary' : 'btn-primary'}`}
           onClick={onToggleReady}
         >
-          {room.players.find(p => p.id === socket.id)?.ready ? '取消准备' : '准备就绪'}
+          {myPlayer?.ready ? '取消准备' : '准备就绪'}
         </button>
         
         {isCreator && (
@@ -136,17 +258,17 @@ function Room({ room, socket, onLeave, onToggleReady, onStart }) {
 
       {showGuide && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
-          <div className="card" style={{ maxWidth: '500px' }}>
-            <h2>游戏规则：{room.mode === '预女猎' ? '预女猎' : '预女猎白'}</h2>
+          <div className="card" style={{ maxWidth: '500px', width: '100%' }}>
+            <h2>遊戲規則：{modeTitle}</h2>
             <div style={{ textAlign: 'left', marginTop: '20px', maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
-              <p><strong>狼人杀 ({room.mode === '预女猎' ? '预女猎' : '预女猎白'})</strong> 是标准的 {room.maxPlayers} 人板子：</p>
+              <p><strong>{introText}</strong></p>
               <ul style={{ paddingLeft: '20px', marginTop: '10px', color: 'var(--text-dim)', lineHeight: '1.6' }}>
-                <li><strong>狼人 ({room.mode === '预女猎' ? 3 : 4}名)：</strong> 每晚可以杀害一名玩家。</li>
-                <li><strong>预言家 (1名)：</strong> 每晚可以查验一名玩家的身份（好人/坏人）。</li>
-                <li><strong>女巫 (1名)：</strong> 拥有一瓶灵药（救人）和一瓶毒药（杀人），每种只能使用一次。</li>
-                <li><strong>猎人 (1名)：</strong> 被杀或被投出且未被毒死时，可以开枪带走一名玩家。</li>
-                {room.mode !== '预女猎' && <li><strong>白痴 (1名)：</strong> 被投票出局时可以翻牌免死，但失去投票权。</li>}
-                <li><strong>平民 ({room.mode === '预女猎' ? 3 : 4}名)：</strong> 无特殊能力，通过分析推理找出狼人。</li>
+                {rolesList.map(r => (
+                  <li key={r.name} style={{ marginBottom: '10px' }}>
+                    <strong>{r.name} ({r.count}名)：</strong>
+                    {ROLE_DESCRIPTIONS[r.name] || '沒有任何特殊功能的村民/角色。'}
+                  </li>
+                ))}
               </ul>
             </div>
             <button className="btn btn-primary" style={{ marginTop: '20px' }} onClick={() => setShowGuide(false)}>我明白了</button>
