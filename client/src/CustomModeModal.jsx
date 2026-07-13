@@ -27,6 +27,7 @@ function CustomModeModal({ onClose, onCreateRoom }) {
   const [selectedGood, setSelectedGood] = useState([]);
   const [civilians, setCivilians] = useState(4);
   const [sequence, setSequence] = useState(['狼人']);
+  const [sheriffEnabled, setSheriffEnabled] = useState(false);
 
   // Auto-calculate civilians to match pax
   useEffect(() => {
@@ -93,7 +94,8 @@ function CustomModeModal({ onClose, onCreateRoom }) {
     onCreateRoom('CUSTOM', {
       maxPlayers: pax,
       rolePool: rolePool,
-      sequenceOrder: sequence
+      sequenceOrder: sequence,
+      sheriffEnabled: sheriffEnabled
     });
   };
 
@@ -168,6 +170,29 @@ function CustomModeModal({ onClose, onCreateRoom }) {
               </div>
             ))}
           </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '15px', borderRadius: '10px', marginTop: '20px', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div>
+            <span style={{ fontWeight: 'bold', fontSize: '0.95rem', display: 'block', color: 'var(--text-light)' }}>警長競選模式 (Sheriff)</span>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>開啟後第一天白天將進行警長競選</span>
+          </div>
+          <button 
+            className={`btn ${sheriffEnabled ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ 
+              width: 'auto', 
+              padding: '6px 16px', 
+              margin: 0,
+              fontSize: '0.8rem',
+              borderColor: sheriffEnabled ? 'var(--amber-glow)' : 'var(--text-dim)',
+              background: sheriffEnabled ? 'var(--amber-glow)' : 'transparent',
+              color: sheriffEnabled ? 'black' : 'var(--text-dim)',
+              fontWeight: 'bold'
+            }}
+            onClick={() => setSheriffEnabled(!sheriffEnabled)}
+          >
+            {sheriffEnabled ? 'ON' : 'OFF'}
+          </button>
         </div>
 
         <div style={{ marginTop: '40px', display: 'flex', gap: '15px' }}>

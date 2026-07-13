@@ -61,6 +61,12 @@ const useNarrator = () => {
         opening: '獵人請睜眼。請確認你目前的狀態。', 
         closing: '獵人請閉眼。' 
     },
+    'NIGHT_WOLF_KING': { 
+        type: 'ACTION', 
+        role: '狼王', 
+        opening: '狼王請睜眼。請確認你目前的狀態。', 
+        closing: '狼王請閉眼。' 
+    },
     'NIGHT_GUARD': { 
         type: 'ACTION', 
         role: '守衛', 
@@ -118,6 +124,10 @@ const useNarrator = () => {
     'RESULTS': { 
       type: 'AUTO', 
       text: '天亮了，所有人请睁眼。' 
+    },
+    'SHERIFF': {
+      type: 'AUTO',
+      text: '想要上警的玩家，请举手。天亮请睁眼。'
     }
   };
 

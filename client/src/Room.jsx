@@ -53,12 +53,16 @@ function Room({ room, socket, onLeave, onToggleReady, onStart, onOpenVotes }) {
   const canStart = useMemo(() => readyCount === room.players.length && room.players.length >= 1, [readyCount, room.players.length]); 
 
   const [sequence, setSequence] = useState(room.sequenceOrder || ['狼人', '女巫', '預言家', '獵人']);
+  const [sheriffEnabled, setSheriffEnabled] = useState(room.sheriffEnabled || false);
 
   useEffect(() => {
     if (room.sequenceOrder) {
       setSequence(room.sequenceOrder);
     }
-  }, [room.sequenceOrder]);
+    if (room.sheriffEnabled !== undefined) {
+      setSheriffEnabled(room.sheriffEnabled);
+    }
+  }, [room.sequenceOrder, room.sheriffEnabled]);
 
   const getRulesData = useMemo(() => {
     let modeTitle = '';
@@ -137,9 +141,9 @@ function Room({ room, socket, onLeave, onToggleReady, onStart, onOpenVotes }) {
   }, [sequence]);
 
   const applyConfig = useCallback(() => {
-    socket.emit('update_room_config', { roomId: room.id, sequenceOrder: sequence });
+    socket.emit('update_room_config', { roomId: room.id, sequenceOrder: sequence, sheriffEnabled });
     setShowConfig(false);
-  }, [socket, room.id, sequence]);
+  }, [socket, room.id, sequence, sheriffEnabled]);
 
   const handleSelectSpot = useCallback((index) => {
     if (room.slots[index]) return;
@@ -156,6 +160,28 @@ function Room({ room, socket, onLeave, onToggleReady, onStart, onOpenVotes }) {
             <h2 style={{ marginBottom: '20px' }}>房间配置</h2>
             <div className="tabs">
               <div className="tab active">叙事顺序 (Sequence)</div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div>
+                <span style={{ fontWeight: 'bold', fontSize: '0.95rem', display: 'block', color: 'var(--text-light)' }}>警長競選模式 (Sheriff)</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>開啟後第一天白天將進行警長競選</span>
+              </div>
+              <button 
+                className={`btn ${sheriffEnabled ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ 
+                  width: 'auto', 
+                  padding: '6px 16px', 
+                  margin: 0,
+                  fontSize: '0.8rem',
+                  borderColor: sheriffEnabled ? 'var(--amber-glow)' : 'var(--text-dim)',
+                  background: sheriffEnabled ? 'var(--amber-glow)' : 'transparent',
+                  color: sheriffEnabled ? 'black' : 'var(--text-dim)',
+                  fontWeight: 'bold'
+                }}
+                onClick={() => setSheriffEnabled(!sheriffEnabled)}
+              >
+                {sheriffEnabled ? 'ON' : 'OFF'}
+              </button>
             </div>
             <div style={{ textAlign: 'left', marginBottom: '20px', maxHeight: '300px', overflowY: 'auto', paddingRight: '10px' }}>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '15px' }}>拖動或點擊箭頭調整夜晚角色行動順序：</p>

@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
 const db = require('./database');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -30,7 +31,7 @@ const DISCONNECT_GRACE_PERIOD = 30000; // 30 seconds
 
 
 const COMPREHENSIVE_SEQUENCE = [
-  '夢魘', '石像鬼', '機械狼', '魔術師', '守衛', '攝夢人', '狼人', '女巫', '預言家', '通靈師', '獵魔人', '獵人', '守墓人'
+  '夢魘', '石像鬼', '機械狼', '魔術師', '守衛', '攝夢人', '狼人', '女巫', '預言家', '通靈師', '獵魔人', '狼王', '獵人', '守墓人'
 ];
 const WOLF_GROUP_ROLES = ['狼人', '狼王', '狼美人', '白狼王', '惡靈騎士', '夢魘', '血月使徒'];
 
@@ -54,7 +55,8 @@ function getDefaultSequenceForMode(mode, config = null) {
   rolePool.forEach(role => {
     if (COMPREHENSIVE_SEQUENCE.includes(role)) {
       activeRoles.add(role);
-    } else if (WOLF_GROUP_ROLES.includes(role)) {
+    }
+    if (WOLF_GROUP_ROLES.includes(role)) {
       activeRoles.add('狼人');
     }
   });
@@ -70,10 +72,20 @@ function generateRoomId() {
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = crypto.randomInt(0, i + 1);
     [array[i], array[j]] = [array[j], array[i]];
   }
   return array;
+}
+
+function getSwappedTarget(room, targetId) {
+  if (!room || !targetId || !room.nightActions || !room.nightActions.magicianSwaps || room.nightActions.magicianSwaps.length < 2) {
+    return targetId;
+  }
+  const [id1, id2] = room.nightActions.magicianSwaps;
+  if (targetId === id1) return id2;
+  if (targetId === id2) return id1;
+  return targetId;
 }
 
 io.on('connection', (socket) => {
@@ -93,6 +105,8 @@ io.on('connection', (socket) => {
       slots: new Array(config ? config.maxPlayers : maxPlayers).fill(null),
       maxPlayers: config ? config.maxPlayers : maxPlayers, 
       status: 'LOBBY', isSimulation: false,
+      swappedIds: [],
+      sheriffEnabled: (config && config.sheriffEnabled) ? config.sheriffEnabled : false,
       sequenceOrder: (config && config.sequenceOrder) ? config.sequenceOrder : getDefaultSequenceForMode(gameMode, config),
       customConfig: config
     };
@@ -131,10 +145,11 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('room_update', room);
   });
 
-  socket.on('update_room_config', ({ roomId, sequenceOrder }) => {
+  socket.on('update_room_config', ({ roomId, sequenceOrder, sheriffEnabled }) => {
     const room = rooms[roomId];
     if (room && room.creator === socket.id && room.status === 'LOBBY') {
       if (sequenceOrder) room.sequenceOrder = sequenceOrder;
+      if (sheriffEnabled !== undefined) room.sheriffEnabled = sheriffEnabled;
       io.to(roomId).emit('room_update', room);
     }
   });
@@ -189,6 +204,7 @@ io.on('connection', (socket) => {
       room.phase = null;
       room.currentSequenceId = 0;
       room.isSimulation = false;
+      room.swappedIds = [];
       room.players = room.players.filter(p => !p.isMock);
       room.slots = room.slots.map(s => (s?.isMock ? null : s));
       room.players.forEach(p => { p.ready = false; p.gameRole = null; });
@@ -255,6 +271,7 @@ io.on('connection', (socket) => {
     room.status = 'STARTED';
     room.phase = 'ROLE_REVEAL';
     room.currentSequenceId = 0; 
+    room.swappedIds = [];
     room.nightActions = { 
       killed: null, 
       verified: null, 
@@ -272,7 +289,8 @@ io.on('connection', (socket) => {
     rolePool.forEach(role => {
       if (COMPREHENSIVE_SEQUENCE.includes(role)) {
         activeRoles.add(role);
-      } else if (WOLF_GROUP_ROLES.includes(role)) {
+      }
+      if (WOLF_GROUP_ROLES.includes(role)) {
         activeRoles.add('狼人');
       }
     });
@@ -353,7 +371,8 @@ io.on('connection', (socket) => {
       '夢魘': 'NIGHT_NIGHTMARE',
       '機械狼': 'NIGHT_MECHANICAL_WOLF',
       '獵魔人': 'NIGHT_DEMON_HUNTER',
-      '守墓人': 'NIGHT_GRAVEDIGGER'
+      '守墓人': 'NIGHT_GRAVEDIGGER',
+      '狼王': 'NIGHT_WOLF_KING'
     };
     const nextRole = room.sequenceOrder[currentId - 1];
 
@@ -372,7 +391,12 @@ io.on('connection', (socket) => {
     if (!room || room.status !== 'NIGHT') return;
     room.status = 'DAY';
     room.phase = 'RESULTS';
-    const { killed, saved, poisoned, guarded, dreaming, hunted } = room.nightActions;
+    const { saved } = room.nightActions;
+    const killed = getSwappedTarget(room, room.nightActions.killed);
+    const poisoned = getSwappedTarget(room, room.nightActions.poisoned);
+    const guarded = getSwappedTarget(room, room.nightActions.guarded);
+    const dreaming = getSwappedTarget(room, room.nightActions.dreaming);
+    const hunted = getSwappedTarget(room, room.nightActions.hunted);
     const results = [];
     
     // 1. Determine Night Deaths
@@ -439,20 +463,47 @@ io.on('connection', (socket) => {
 
     room.nightResults = results;
     console.log(`[Transition] Room: ${roomId} - Switching to DAY. Results:`, results);
-    io.to(roomId).emit('room_update', room);
     
-    if (roomTimers[roomId + '_day']) clearTimeout(roomTimers[roomId + '_day']);
-    roomTimers[roomId + '_day'] = setTimeout(() => {
-      room.phase = 'VOTING';
-      io.to(roomId).emit('room_update', room);
-    }, 15000); 
+    if (room.sheriffEnabled) {
+      room.phase = 'SHERIFF';
+    } else {
+      room.phase = 'RESULTS';
+    }
+    io.to(roomId).emit('room_update', room);
   }
+
+  socket.on('proceed_to_results', (roomId) => {
+    const room = rooms[roomId];
+    if (!room || room.phase !== 'SHERIFF') return;
+    
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player || (!player.isCreator && !(room.isSimulation && socket.id === room.creator))) return;
+
+    room.phase = 'RESULTS';
+    io.to(roomId).emit('room_update', room);
+  });
+
+  socket.on('proceed_to_voting', (roomId) => {
+    const room = rooms[roomId];
+    if (!room || room.phase !== 'RESULTS') return;
+    
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player || (!player.isCreator && !(room.isSimulation && socket.id === room.creator))) return;
+
+    room.phase = 'VOTING';
+    io.to(roomId).emit('room_update', room);
+  });
 
   socket.on('werewolf_kill', ({ roomId, targetId }) => {
     const room = rooms[roomId];
     if (!room || room.phase !== 'NIGHT_WEREWOLVES') return;
     const player = room.players.find(p => p.id === socket.id);
     if (WOLF_GROUP_ROLES.includes(player?.gameRole?.name) || (room.isSimulation && socket.id === room.creator)) {
+      const target = room.players.find(p => p.id === targetId);
+      if (target && target.gameRole?.name === '狼王') {
+        console.warn(`[Warning] Attempted to kill Wolf King ${target.name}. Action blocked.`);
+        return;
+      }
       room.nightActions.killed = targetId;
       io.to(roomId).emit('room_update', room);
     }
@@ -464,7 +515,11 @@ io.on('connection', (socket) => {
     const player = room.players.find(p => p.id === socket.id);
     if (player?.gameRole?.name === '預言家' || (room.isSimulation && socket.id === room.creator)) {
       const target = room.players.find(p => p.id === targetId);
-      if (target) socket.emit('verify_result', { name: target.name, alignment: target.gameRole.alignment });
+      const swappedTargetId = getSwappedTarget(room, targetId);
+      const swappedTarget = room.players.find(p => p.id === swappedTargetId);
+      if (target && swappedTarget) {
+        socket.emit('verify_result', { name: target.name, alignment: swappedTarget.gameRole.alignment });
+      }
     }
   });
 
@@ -493,16 +548,40 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('room_update', room);
   });
 
+  socket.on('magician_swap', ({ roomId, targets }) => {
+    const room = rooms[roomId];
+    if (!room || room.phase !== 'NIGHT_MAGICIAN') return;
+    
+    // Validate target length and that they are alive
+    if (!Array.isArray(targets) || targets.length !== 2) return;
+    const p1 = room.players.find(p => p.id === targets[0]);
+    const p2 = room.players.find(p => p.id === targets[1]);
+    if (!p1 || !p2 || !p1.gameRole.isAlive || !p2.gameRole.isAlive) return;
+
+    // Validate they haven't been swapped before
+    if (!room.swappedIds) room.swappedIds = [];
+    if (room.swappedIds.includes(targets[0]) || room.swappedIds.includes(targets[1])) {
+      console.warn(`[Warning] Attempted to swap already-swapped players. Action blocked.`);
+      return;
+    }
+
+    room.nightActions.magicianSwaps = targets;
+    room.swappedIds.push(targets[0], targets[1]);
+    io.to(roomId).emit('room_update', room);
+  });
+
   socket.on('psychic_verify', ({ roomId, targetId }) => {
     const room = rooms[roomId];
     if (!room || (room.phase !== 'NIGHT_PSYCHIC' && room.phase !== 'NIGHT_GARGOYLE')) return;
     const target = room.players.find(p => p.id === targetId);
-    if (target) {
-      let roleNameToShow = target.gameRole.name;
-      if (room.phase === 'NIGHT_PSYCHIC' && target.gameRole.name === '機械狼') {
-        roleNameToShow = target.gameRole.learnedRole || '機械狼';
+    const swappedTargetId = getSwappedTarget(room, targetId);
+    const swappedTarget = room.players.find(p => p.id === swappedTargetId);
+    if (target && swappedTarget) {
+      let roleNameToShow = swappedTarget.gameRole.name;
+      if (room.phase === 'NIGHT_PSYCHIC' && swappedTarget.gameRole.name === '機械狼') {
+        roleNameToShow = swappedTarget.gameRole.learnedRole || '機械狼';
       }
-      socket.emit('verify_result', { name: target.name, alignment: target.gameRole.alignment, roleName: roleNameToShow });
+      socket.emit('verify_result', { name: target.name, alignment: swappedTarget.gameRole.alignment, roleName: roleNameToShow });
     }
   });
 
@@ -517,16 +596,18 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room || room.phase !== 'NIGHT_MECHANICAL_WOLF') return;
     const target = room.players.find(p => p.id === targetId);
-    if (target) {
+    const swappedTargetId = getSwappedTarget(room, targetId);
+    const swappedTarget = room.players.find(p => p.id === swappedTargetId);
+    if (target && swappedTarget) {
       let player = room.players.find(p => p.id === socket.id);
       if (room.isSimulation && socket.id === room.creator) {
         player = room.players.find(p => p.gameRole?.name === '機械狼');
       }
       if (player) {
-        player.gameRole.learnedRole = target.gameRole.name;
-        socket.emit('verify_result', { name: target.name, alignment: target.gameRole.alignment, roleName: target.gameRole.name });
+        player.gameRole.learnedRole = swappedTarget.gameRole.name;
+        socket.emit('verify_result', { name: target.name, alignment: swappedTarget.gameRole.alignment, roleName: swappedTarget.gameRole.name });
       }
-      socket.emit('game_log', `你成功學習了 ${target.name} 的技能 (${target.gameRole.name})`);
+      socket.emit('game_log', `你成功學習了 ${target.name} 的技能 (${swappedTarget.gameRole.name})`);
     }
   });
 

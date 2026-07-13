@@ -55,6 +55,11 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
   const [showRole, setShowRole] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
   const [canAct, setCanAct] = useState(false);
+  const [selectedMagicianTargets, setSelectedMagicianTargets] = useState([]);
+
+  useEffect(() => {
+    setSelectedMagicianTargets([]);
+  }, [room.phase]);
 
   const { speak, stopSpeech, NARRATION_SEQUENCE } = useNarrator();
   const lastSequenceRef = useRef(null);
@@ -74,17 +79,23 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
     console.log(`[GameView Logic] Status: ${room.status}, Phase: ${room.phase}`);
     if (room.status !== 'NIGHT' && room.status !== 'DAY') return;
 
-    const seqId = room.currentSequenceId;
-    if (seqId === lastSequenceRef.current) return;
-    lastSequenceRef.current = seqId;
+    const eventKey = `${room.status}_${room.phase}_${room.currentSequenceId}`;
+    if (eventKey === lastSequenceRef.current) return;
+    lastSequenceRef.current = eventKey;
 
     setCanAct(false);
 
-    console.log(`[Narrator Controller] Phase: ${room.phase}, Status: ${room.status}, SequenceID: ${seqId}`);
+    console.log(`[Narrator Controller] Phase: ${room.phase}, Status: ${room.status}, SequenceID: ${room.currentSequenceId}`);
 
     if (room.phase === 'NIGHT_DUSK') {
       const seq = NARRATION_SEQUENCE['NIGHT_DUSK'];
       speak(seq.text, () => socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId }));
+      return;
+    }
+
+    if (room.phase === 'SHERIFF') {
+      const seq = NARRATION_SEQUENCE['SHERIFF'];
+      if (seq) speak(seq.text);
       return;
     }
 
@@ -167,6 +178,10 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
     setPendingAction({ type: 'guard_protect', targetId: null, targetName: '不守護（空守）', targetSpot: null });
   }, []);
 
+  const initiateDreamSkip = useCallback(() => {
+    setPendingAction({ type: 'dream_link', targetId: null, targetName: '不攝夢（空夢）', targetSpot: null });
+  }, []);
+
   const handleFinishTurn = useCallback(() => {
     const seq = NARRATION_SEQUENCE[room.phase];
     if (seq && seq.closing) {
@@ -176,6 +191,33 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
       socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
     }
   }, [NARRATION_SEQUENCE, room.phase, room.id, room.currentSequenceId, socket, speak]);
+
+  const handleMagicianToggle = useCallback((id) => {
+    setSelectedMagicianTargets(prev => {
+      if (prev.includes(id)) {
+        return prev.filter(x => x !== id);
+      }
+      if (prev.length >= 2) {
+        return [prev[1], id];
+      }
+      return [...prev, id];
+    });
+  }, []);
+
+  const confirmMagicianSwap = useCallback(() => {
+    if (selectedMagicianTargets.length !== 2) return;
+    const seq = NARRATION_SEQUENCE[room.phase];
+    if (seq && seq.closing) {
+      setCanAct(false);
+      speak(seq.closing, () => {
+        socket.emit('magician_swap', { roomId: room.id, targets: selectedMagicianTargets });
+        socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
+      });
+    } else {
+      socket.emit('magician_swap', { roomId: room.id, targets: selectedMagicianTargets });
+      socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
+    }
+  }, [selectedMagicianTargets, NARRATION_SEQUENCE, room.phase, room.id, room.currentSequenceId, socket, speak]);
 
   const handleEndGame = useCallback(() => {
     stopSpeech();
@@ -187,7 +229,7 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
   }, [socket, room.id]);
 
   const renderActions = () => {
-    if (!isAlive && !myPlayer?.gameRole?.isIdiotRevealed && !hasGodMode) return <p style={{ color: '#ff4444' }}>你已被淘汰。</p>;
+    if (!isAlive && !myPlayer?.gameRole?.isIdiotRevealed && !hasGodMode && !isCreator) return <p style={{ color: '#ff4444' }}>你已被淘汰。</p>;
 
     if (room.phase === 'ROLE_REVEAL') {
       return (
@@ -211,18 +253,27 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
       );
     }
 
-    if (!canAct) return <p style={{ color: 'var(--amber-glow)', fontStyle: 'italic' }}>🎙️ 请听从旁白引导...</p>;
+    if (room.status === 'NIGHT' && !canAct) return <p style={{ color: 'var(--amber-glow)', fontStyle: 'italic' }}>🎙️ 请听从旁白引导...</p>;
 
     if (room.phase === 'NIGHT_WEREWOLVES' && (WOLF_GROUP_ROLES.includes(role?.name) || hasGodMode)) {
       return (
         <div>
           <h4>狼人行動：請選擇獵殺目標</h4>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
-            {room.slots.filter(p => p && p.gameRole?.isAlive).map(p => (
-              <button key={p.id} className="btn btn-secondary btn-action" style={{ width: 'auto', fontSize: '0.9rem', borderColor: p.gameRole?.name === '狼人' ? '#ff4444' : '' }} onClick={() => initiateAction('werewolf_kill', p)}>
-                擊殺 #{room.slots.indexOf(p) + 1}
-              </button>
-            ))}
+            {room.slots.filter(p => p && p.gameRole?.isAlive).map(p => {
+              const isWolfKing = p.gameRole?.name === '狼王';
+              return (
+                <button 
+                  key={p.id} 
+                  className="btn btn-secondary btn-action" 
+                  style={{ width: 'auto', fontSize: '0.9rem', borderColor: p.gameRole?.name === '狼人' ? '#ff4444' : '' }} 
+                  onClick={() => initiateAction('werewolf_kill', p)}
+                  disabled={isWolfKing}
+                >
+                  擊殺 #{room.slots.indexOf(p) + 1} {isWolfKing && '(狼王不可自刀)'}
+                </button>
+              );
+            })}
           </div>
         </div>
       );
@@ -312,8 +363,41 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
       return (
         <div>
           <h4>魔術師行動：請選擇兩名玩家交換</h4>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>點擊玩家頭像選擇，然後點擊確認。</p>
-          <button className="btn btn-primary btn-action" style={{ marginTop: '10px' }} onClick={handleFinishTurn}>確認交換</button>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)', marginBottom: '15px' }}>
+            請選擇兩名玩家交換狀態。已經被交換過的玩家不可再次選擇。
+          </p>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px', justifyContent: 'center' }}>
+            {room.slots.map((p, i) => {
+              if (!p || !p.gameRole?.isAlive) return null;
+              const isSelected = selectedMagicianTargets.includes(p.id);
+              const isAlreadySwapped = room.swappedIds?.includes(p.id);
+              return (
+                <button 
+                  key={p.id} 
+                  className={`btn ${isSelected ? 'btn-primary' : 'btn-secondary'}`} 
+                  style={{ 
+                    width: 'auto', 
+                    fontSize: '0.9rem',
+                    borderColor: isSelected ? 'var(--amber-glow)' : '',
+                    opacity: isAlreadySwapped ? 0.4 : 1,
+                    cursor: isAlreadySwapped ? 'not-allowed' : 'pointer'
+                  }} 
+                  onClick={() => handleMagicianToggle(p.id)}
+                  disabled={isAlreadySwapped}
+                >
+                  #{i + 1} {p.name} {isAlreadySwapped && '(已交換)'}
+                </button>
+              );
+            })}
+          </div>
+          <button 
+            className="btn btn-primary btn-action" 
+            style={{ marginTop: '20px', width: 'auto', padding: '10px 40px' }} 
+            onClick={confirmMagicianSwap}
+            disabled={selectedMagicianTargets.length !== 2}
+          >
+            確認交換 ({selectedMagicianTargets.length}/2)
+          </button>
         </div>
       );
     }
@@ -328,6 +412,9 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
                 攝夢 #{i + 1}
               </button>
             ))}
+            <button className="btn btn-secondary" style={{ width: 'auto', borderColor: 'var(--amber-glow)', fontSize: '0.9rem' }} onClick={initiateDreamSkip}>
+              不攝夢 (空夢)
+            </button>
           </div>
         </div>
       );
@@ -394,7 +481,83 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
       );
     }
 
-    if (room.status === 'DAY' && room.phase !== 'RESULTS') {
+    if (room.phase === 'NIGHT_WOLF_KING' && (role?.name === '狼王' || hasGodMode)) {
+        const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '狼王') : myPlayer;
+        const isPoisoned = room.nightActions.poisoned === targetPlayer?.id;
+
+        return (
+          <div>
+            <h4>狼王行動：</h4>
+            <p style={{ marginBottom: '15px', fontSize: '0.9rem' }}>
+              你的技能狀態：
+              {isPoisoned ? (
+                <strong style={{ color: '#ff4444' }}> 不可用 (被女巫毒殺)</strong>
+              ) : (
+                <strong style={{ color: 'var(--amber-glow)' }}> 可用</strong>
+              )}
+            </p>
+            <button className="btn btn-primary btn-action" style={{ width: 'auto', padding: '10px 40px' }} onClick={handleFinishTurn}>確認 (OK)</button>
+          </div>
+        );
+    }
+
+    if (room.status === 'DAY') {
+      if (room.phase === 'SHERIFF') {
+        return (
+          <div>
+            <h4>警長競選階段</h4>
+            <p style={{ fontSize: '1.1rem', color: 'var(--amber-glow)', margin: '20px 0', lineHeight: '1.6' }}>
+              📢 想要上警的玩家，請舉手。<br />天亮請睜眼。
+            </p>
+            {isCreator && (
+              <button 
+                className="btn btn-primary btn-action" 
+                style={{ width: 'auto', padding: '10px 40px', marginTop: '10px' }} 
+                onClick={() => socket.emit('proceed_to_results', room.id)}
+              >
+                公佈昨晚出局情況 (Proceed to Results)
+              </button>
+            )}
+          </div>
+        );
+      }
+
+      if (room.phase === 'RESULTS') {
+        return (
+          <div>
+            <h4>昨晚出局情況</h4>
+            <div style={{ margin: '20px 0', fontSize: '1.1rem', color: 'var(--amber-glow)', lineHeight: '1.6' }}>
+              {room.nightResults.length === 0 ? (
+                <p>🟢 昨晚是平安夜，無人出局。</p>
+              ) : (
+                <div>
+                  <p>🔴 昨晚出局的玩家有：</p>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px', justifyContent: 'center' }}>
+                    {room.nightResults.map(r => {
+                      const spotIdx = room.slots.findIndex(s => s?.name === r.name) + 1;
+                      return (
+                        <div key={r.id} style={{ background: 'rgba(255, 68, 68, 0.15)', border: '1px solid #ff4444', padding: '6px 16px', borderRadius: '8px', fontWeight: 'bold' }}>
+                          #{spotIdx} 玩家 ({r.name})
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            {isCreator && (
+              <button 
+                className="btn btn-primary btn-action" 
+                style={{ width: 'auto', padding: '10px 40px', marginTop: '10px' }} 
+                onClick={() => socket.emit('proceed_to_voting', room.id)}
+              >
+                進入白天討論/投票階段 (Proceed to Voting)
+              </button>
+            )}
+          </div>
+        );
+      }
+
       if ((role?.name === '騎士' || hasGodMode) && isAlive) {
         return (
           <div>
@@ -406,6 +569,22 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
                 </button>
               ))}
             </div>
+          </div>
+        );
+      }
+      if (room.phase === 'VOTING') {
+        return (
+          <div>
+            <p style={{ color: 'var(--amber-glow)', margin: '15px 0' }}>💬 白天討論與投票中... 請點擊玩家頭像查看詳情或投票。</p>
+            {isCreator && (
+              <button 
+                className="btn btn-primary btn-action" 
+                style={{ width: 'auto', padding: '10px 40px' }} 
+                onClick={handleEnterNight}
+              >
+                進入天黑 (Enter Night)
+              </button>
+            )}
           </div>
         );
       }
@@ -467,7 +646,9 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
           <div className="card" style={{ width: '100%', maxWidth: '320px', border: '1px solid var(--amber-glow)' }}>
             <h3 style={{ color: 'var(--amber-glow)', marginBottom: '15px' }}>确认行动</h3>
             <p style={{ fontSize: '0.9rem' }}>
-              {pendingAction.targetId === null ? '确定选择不守护任何人（空守）？' : `确定对 #${pendingAction.targetSpot} 玩家执行操作？`}
+              {pendingAction.targetId === null ? 
+                (pendingAction.type === 'guard_protect' ? '确定选择不守护任何人（空守）？' : '确定选择不摄入任何人梦境（空梦）？') : 
+                `确定对 #${pendingAction.targetSpot} 玩家执行操作？`}
             </p>
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
               <button className="btn btn-primary" onClick={confirmAction}>确定</button>
@@ -486,6 +667,10 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
              room.phase === 'NIGHT_WITCH' ? '女巫行动' : 
              room.phase === 'NIGHT_SEER' ? '预言家行动' : 
              room.phase === 'NIGHT_HUNTER' ? '猎人行动' :
+             room.phase === 'NIGHT_WOLF_KING' ? '狼王行动' :
+             room.phase === 'SHERIFF' ? '警长竞选' :
+             room.phase === 'RESULTS' ? '昨晚出局情况' :
+             room.phase === 'VOTING' ? '投票阶段' :
              (room.phase || room.status)
           }</span></h2>
           <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>房号 {room.id}</p>
