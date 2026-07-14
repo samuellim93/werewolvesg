@@ -31,15 +31,23 @@ const DISCONNECT_GRACE_PERIOD = 30000; // 30 seconds
 
 
 const COMPREHENSIVE_SEQUENCE = [
-  '夢魘', '石像鬼', '機械狼', '魔術師', '守衛', '攝夢人', '狼人', '女巫', '預言家', '通靈師', '獵魔人', '狼王', '獵人', '守墓人'
+  '夢魘', 
+  '覺醒隱狼',
+  '尋香魅影',
+  '覺醒狼王',
+  '石像鬼', '機械狼', '魔術師', '守衛', '攝夢人', '狼人', '女巫', '預言家', 
+  '覺醒預言家',
+  '通靈師', '獵魔人', '狼王', '獵人', '守墓人'
 ];
-const WOLF_GROUP_ROLES = ['狼人', '狼王', '狼美人', '白狼王', '惡靈騎士', '夢魘', '血月使徒'];
+const WOLF_GROUP_ROLES = ['狼人', '狼王', '狼美人', '白狼王', '惡靈騎士', '夢魘', '血月使徒', '覺醒狼王', '覺醒隱狼', '尋香魅影'];
 
 
 function getDefaultSequenceForMode(mode, config = null) {
   let rolePool = [];
   if (mode === '預女獵') {
     rolePool = ['狼人', '狼人', '狼人', '預言家', '女巫', '獵人', '平民', '平民', '平民'];
+  } else if (mode === '尋香識命') {
+    rolePool = ['狼人', '狼人', '狼人', '尋香魅影', '覺醒預言家', '女巫', '獵人', '守衛', '平民', '平民', '平民', '平民'];
   } else if (mode === '狼王攝夢人') {
     rolePool = ['狼人', '狼人', '狼人', '狼王', '預言家', '女巫', '獵人', '攝夢人', '平民', '平民', '平民', '平民'];
   } else if (mode === '機械狼通女獵守') {
@@ -86,6 +94,31 @@ function getSwappedTarget(room, targetId) {
   if (targetId === id1) return id2;
   if (targetId === id2) return id1;
   return targetId;
+}
+
+function checkPhantomBondDeath(room, deadId) {
+  if (!room.isBondTriggered && room.nightActions.scentPhantomBonds && room.nightActions.scentPhantomBonds.length === 2) {
+    const [b1, b2] = room.nightActions.scentPhantomBonds;
+    const b1Swapped = getSwappedTarget(room, b1);
+    const b2Swapped = getSwappedTarget(room, b2);
+    
+    if (deadId === b1Swapped) {
+      const partner = room.players.find(p => p.id === b2Swapped);
+      if (partner && partner.gameRole && partner.gameRole.isAlive) {
+        partner.gameRole.isAlive = false;
+        room.isBondTriggered = true;
+        return partner;
+      }
+    } else if (deadId === b2Swapped) {
+      const partner = room.players.find(p => p.id === b1Swapped);
+      if (partner && partner.gameRole && partner.gameRole.isAlive) {
+        partner.gameRole.isAlive = false;
+        room.isBondTriggered = true;
+        return partner;
+      }
+    }
+  }
+  return null;
 }
 
 io.on('connection', (socket) => {
@@ -243,6 +276,8 @@ io.on('connection', (socket) => {
     let rolePool = [];
     if (room.mode === '預女獵') {
       rolePool = ['狼人', '狼人', '狼人', '預言家', '女巫', '獵人', '平民', '平民', '平民'];
+    } else if (room.mode === '尋香識命') {
+      rolePool = ['狼人', '狼人', '狼人', '尋香魅影', '覺醒預言家', '女巫', '獵人', '守衛', '平民', '平民', '平民', '平民'];
     } else if (room.mode === '狼王攝夢人') {
       rolePool = ['狼人', '狼人', '狼人', '狼王', '預言家', '女巫', '獵人', '攝夢人', '平民', '平民', '平民', '平民'];
     } else if (room.mode === '機械狼通女獵守') {
@@ -260,18 +295,26 @@ io.on('connection', (socket) => {
         const meta = roleName ? rolesMeta.find(r => r.name === roleName) : null;
         if (meta) {
           player.gameRole = { name: meta.name, alignment: meta.alignment, description: meta.description, ability: meta.ability, isAlive: true };
+          // Initialize new role variables
+          player.gameRole.claws = meta.name === '覺醒狼王' ? 2 : 0;
+          player.gameRole.mimickedFrom = null;
           if (!player.isMock) io.to(player.id).emit('assign_role', player.gameRole);
         } else {
           console.warn(`[Warning] No role meta found for index ${index} (roleName: ${roleName}). Falling back to Villager.`);
           const villagerMeta = rolesMeta.find(r => r.name === '平民');
           player.gameRole = { name: villagerMeta.name, alignment: villagerMeta.alignment, description: villagerMeta.description, ability: villagerMeta.ability, isAlive: true };
+          player.gameRole.claws = 0;
+          player.gameRole.mimickedFrom = null;
         }
       }
     });
     room.status = 'STARTED';
     room.phase = 'ROLE_REVEAL';
+    room.isBondTriggered = false;
+    room.scentKnownWolfSpot = null;
     room.currentSequenceId = 0; 
     room.swappedIds = [];
+    room.round = 0;
     room.nightActions = { 
       killed: null, 
       verified: null, 
@@ -281,7 +324,11 @@ io.on('connection', (socket) => {
       dreaming: null,
       feared: null,
       hunted: null,
-      magicianSwaps: []
+      magicianSwaps: [],
+      awakenedSeerVerify: [],
+      scentPhantomBonds: [],
+      awakenedWolfKingKilled: null,
+      awakenedHiddenWolfMimic: null
     };
 
     // Dynamically filter sequenceOrder based on active roles in the pool
@@ -329,8 +376,38 @@ io.on('connection', (socket) => {
     
     console.log(`[Night Phase] Room: ${roomId} - Transitioning to NIGHT`);
     room.status = 'NIGHT';
+    room.round = (room.round || 0) + 1;
     room.currentSequenceId = 1;
     room.phase = 'NIGHT_DUSK';
+
+    // Reset nightActions but preserve scentPhantomBonds across nights
+    const existingBonds = room.nightActions ? room.nightActions.scentPhantomBonds : [];
+    room.nightActions = { 
+      killed: null, 
+      verified: null, 
+      saved: false, 
+      poisoned: null,
+      guarded: null,
+      dreaming: null,
+      feared: null,
+      hunted: null,
+      magicianSwaps: [],
+      awakenedSeerVerify: [],
+      scentPhantomBonds: existingBonds,
+      awakenedWolfKingKilled: null,
+      awakenedHiddenWolfMimic: null
+    };
+
+    // Check for Awakened Hidden Wolf activation
+    const hiddenWolf = room.players.find(p => p.gameRole && p.gameRole.name === '覺醒隱狼' && p.gameRole.isAlive);
+    if (hiddenWolf) {
+      const otherWolves = room.players.filter(p => p.id !== hiddenWolf.id && WOLF_GROUP_ROLES.includes(p.gameRole?.name));
+      const allOtherWolvesDead = otherWolves.length > 0 && otherWolves.every(p => !p.gameRole?.isAlive);
+      if (allOtherWolvesDead) {
+        hiddenWolf.gameRole.isAwakened = true;
+      }
+    }
+
     io.to(roomId).emit('room_update', room);
   }
 
@@ -372,13 +449,64 @@ io.on('connection', (socket) => {
       '機械狼': 'NIGHT_MECHANICAL_WOLF',
       '獵魔人': 'NIGHT_DEMON_HUNTER',
       '守墓人': 'NIGHT_GRAVEDIGGER',
-      '狼王': 'NIGHT_WOLF_KING'
+      '狼王': 'NIGHT_WOLF_KING',
+      '覺醒預言家': 'NIGHT_AWAKENED_SEER',
+      '覺醒狼王': 'NIGHT_AWAKENED_WOLF_KING',
+      '覺醒隱狼': 'NIGHT_AWAKENED_HIDDEN_WOLF',
+      '尋香魅影': 'NIGHT_SCENT_PHANTOM'
     };
-    const nextRole = room.sequenceOrder[currentId - 1];
 
-    if (nextRole) {
-      room.phase = seqMap[nextRole];
-      room.currentSequenceId = currentId + 1;
+    let nextIndex = currentId - 1;
+    let nextRole = null;
+    let nextPhase = null;
+
+    while (nextIndex < room.sequenceOrder.length) {
+      const candidateRole = room.sequenceOrder[nextIndex];
+      const phase = seqMap[candidateRole];
+      let isActive = false;
+
+      if (candidateRole === '狼人') {
+        const livingWolves = room.players.filter(p => p.gameRole && p.gameRole.isAlive && WOLF_GROUP_ROLES.includes(p.gameRole.name));
+        isActive = livingWolves.length > 0;
+      } else if (candidateRole === '覺醒隱狼') {
+        const actor = room.players.find(p => p.gameRole && p.gameRole.name === '覺醒隱狼');
+        isActive = actor && actor.gameRole.isAlive && actor.gameRole.isAwakened;
+      } else if (candidateRole === '尋香魅影') {
+        const actor = room.players.find(p => p.gameRole && p.gameRole.name === '尋香魅影');
+        isActive = actor && actor.gameRole.isAlive;
+      } else if (candidateRole === '覺醒狼王') {
+        const actor = room.players.find(p => p.gameRole && p.gameRole.name === '覺醒狼王');
+        isActive = actor && actor.gameRole.isAlive;
+      } else {
+        const actors = room.players.filter(p => p.gameRole && p.gameRole.name === candidateRole && p.gameRole.isAlive);
+        isActive = actors.length > 0;
+      }
+
+      if (isActive) {
+        nextRole = candidateRole;
+        nextPhase = phase;
+        break;
+      }
+      nextIndex++;
+    }
+
+    if (nextRole && nextPhase) {
+      room.phase = nextPhase;
+      room.currentSequenceId = nextIndex + 2;
+
+      // Calculate Scent-Seeking Phantom teammate discovery on Night 1 turn
+      if (nextPhase === 'NIGHT_SCENT_PHANTOM' && room.round === 1) {
+        const phantom = room.players.find(p => p.gameRole && p.gameRole.name === '尋香魅影');
+        if (phantom) {
+          const otherWolves = room.slots.filter(p => p && p.id !== phantom.id && WOLF_GROUP_ROLES.includes(p.gameRole?.name));
+          if (otherWolves.length > 0) {
+            const randomWolf = otherWolves[Math.floor(Math.random() * otherWolves.length)];
+            const wolfSpot = room.slots.findIndex(s => s?.id === randomWolf.id) + 1;
+            room.scentKnownWolfSpot = wolfSpot;
+          }
+        }
+      }
+
       io.to(roomId).emit('room_update', room);
     } else {
       room.currentSequenceId = room.sequenceOrder.length + 2; 
@@ -447,6 +575,28 @@ io.on('connection', (socket) => {
       }
     }
 
+    // -- Scent-Seeking Phantom Binding --
+    if (!room.isBondTriggered && room.nightActions.scentPhantomBonds && room.nightActions.scentPhantomBonds.length === 2) {
+      const [b1, b2] = room.nightActions.scentPhantomBonds;
+      const b1Swapped = getSwappedTarget(room, b1);
+      const b2Swapped = getSwappedTarget(room, b2);
+      
+      const b1Dies = deathMap.has(b1Swapped);
+      const b2Dies = deathMap.has(b2Swapped);
+      
+      if (b1Dies && !b2Dies) {
+        deathMap.add(b2Swapped);
+        room.isBondTriggered = true;
+        console.log(`[Scent Phantom Link] Night death triggered link on ${b2Swapped}`);
+      } else if (b2Dies && !b1Dies) {
+        deathMap.add(b1Swapped);
+        room.isBondTriggered = true;
+        console.log(`[Scent Phantom Link] Night death triggered link on ${b1Swapped}`);
+      } else if (b1Dies && b2Dies) {
+        room.isBondTriggered = true;
+      }
+    }
+
     // 2. Apply Deaths & Collect Results
     deathMap.forEach(pid => {
       const p = room.players.find(p => p.id === pid);
@@ -454,8 +604,9 @@ io.on('connection', (socket) => {
         p.gameRole.isAlive = false;
         results.push({ name: p.name, id: p.id, type: 'died' });
         
-        // Special Gun Status
-        if (p.gameRole.name === '獵人' || p.gameRole.name === '狼王') {
+        // Special Gun / Claws Status
+        const hasWolfClaw = p.gameRole.claws > 0;
+        if (p.gameRole.name === '獵人' || p.gameRole.name === '狼王' || p.gameRole.name === '覺醒狼王' || hasWolfClaw) {
           p.gameRole.canShoot = !poisoned || poisoned !== pid;
         }
       }
@@ -617,7 +768,94 @@ io.on('connection', (socket) => {
     room.nightActions.hunted = targetId;
     io.to(roomId).emit('room_update', room);
   });
+  socket.on('awakened_seer_verify', ({ roomId, targets }) => {
+    const room = rooms[roomId];
+    if (!room || room.phase !== 'NIGHT_AWAKENED_SEER' || !targets || targets.length !== 2) return;
+    
+    const target1 = room.players.find(p => p.id === targets[0]);
+    const target2 = room.players.find(p => p.id === targets[1]);
+    
+    const swappedId1 = getSwappedTarget(room, targets[0]);
+    const swappedId2 = getSwappedTarget(room, targets[1]);
+    
+    const swappedTarget1 = room.players.find(p => p.id === swappedId1);
+    const swappedTarget2 = room.players.find(p => p.id === swappedId2);
+    
+    if (target1 && target2 && swappedTarget1 && swappedTarget2) {
+      const isGood1 = swappedTarget1.gameRole.alignment === 'Good';
+      const isGood2 = swappedTarget2.gameRole.alignment === 'Good';
+      
+      const finalAlignment = (isGood1 && isGood2) ? 'Good' : 'Bad';
+      
+      socket.emit('verify_result', { 
+        name: `${target1.name} 和 ${target2.name}`, 
+        alignment: finalAlignment
+      });
+    }
+  });
 
+  socket.on('awakened_wolf_king_pass_claw', ({ roomId, targetId }) => {
+    const room = rooms[roomId];
+    if (!room || room.phase !== 'NIGHT_AWAKENED_WOLF_KING') return;
+    
+    let actor = room.players.find(p => p.id === socket.id);
+    if (room.isSimulation && socket.id === room.creator) {
+      actor = room.players.find(p => p.gameRole?.name === '覺醒狼王');
+    }
+    
+    const teammate = room.players.find(p => p.id === targetId);
+    if (actor && teammate && actor.gameRole.claws > 0) {
+      teammate.gameRole.claws = (teammate.gameRole.claws || 0) + 1;
+      actor.gameRole.claws--;
+      console.log(`[Awakened Wolf King] Passed claw to ${teammate.name}. Teammate claws: ${teammate.gameRole.claws}, Actor claws: ${actor.gameRole.claws}`);
+      io.to(roomId).emit('room_update', room);
+    }
+  });
+
+  socket.on('awakened_wolf_king_self_kill', ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room || room.phase !== 'NIGHT_AWAKENED_WOLF_KING') return;
+    
+    let actor = room.players.find(p => p.id === socket.id);
+    if (room.isSimulation && socket.id === room.creator) {
+      actor = room.players.find(p => p.gameRole?.name === '覺醒狼王');
+    }
+    
+    if (actor) {
+      room.nightActions.killed = actor.id;
+      console.log(`[Awakened Wolf King] Self killed: ${actor.name}`);
+      io.to(roomId).emit('room_update', room);
+    }
+  });
+
+  socket.on('awakened_hidden_wolf_mimic', ({ roomId, targetId }) => {
+    const room = rooms[roomId];
+    if (!room || room.phase !== 'NIGHT_AWAKENED_HIDDEN_WOLF') return;
+    
+    let actor = room.players.find(p => p.id === socket.id);
+    if (room.isSimulation && socket.id === room.creator) {
+      actor = room.players.find(p => p.gameRole?.name === '覺醒隱狼');
+    }
+    
+    const target = room.players.find(p => p.id === targetId);
+    const swappedId = getSwappedTarget(room, targetId);
+    const swappedTarget = room.players.find(p => p.id === swappedId);
+    
+    if (actor && target && swappedTarget) {
+      actor.gameRole.mimickedFrom = swappedTarget.gameRole.name;
+      console.log(`[Awakened Hidden Wolf] Mimicked ${target.name} (${swappedTarget.gameRole.name})`);
+      io.to(roomId).emit('room_update', room);
+    }
+  });
+
+  socket.on('scent_phantom_bind', ({ roomId, targets }) => {
+    const room = rooms[roomId];
+    if (!room || room.phase !== 'NIGHT_SCENT_PHANTOM' || !targets || targets.length !== 2) return;
+    
+    room.nightActions.scentPhantomBonds = targets;
+    console.log(`[Scent Phantom] Bound: ${targets.join(' and ')}`);
+    io.to(roomId).emit('room_update', room);
+  });
   socket.on('knight_duel', ({ roomId, targetId }) => {
     const room = rooms[roomId];
     if (!room || room.status !== 'DAY') return;
@@ -632,10 +870,31 @@ io.on('connection', (socket) => {
         if (target.gameRole.alignment === 'Bad') {
           target.gameRole.isAlive = false;
           io.to(roomId).emit('game_log', `騎士決鬥成功！狼人 ${target.name} 被斬殺。`);
+          
+          const hasWolfClaw = target.gameRole.claws > 0;
+          if (target.gameRole.name === '獵人' || target.gameRole.name === '狼王' || target.gameRole.name === '覺醒狼王' || hasWolfClaw) {
+            target.gameRole.canShoot = true;
+          }
+          
+          const partner = checkPhantomBondDeath(room, target.id);
+          if (partner) {
+            io.to(roomId).emit('game_log', `【生死連結】玩家 ${partner.name} 隨之出局！`);
+          }
+          
           startNight(roomId);
         } else {
           actor.gameRole.isAlive = false;
           io.to(roomId).emit('game_log', `騎士決鬥失敗！騎士 ${actor.name} 以死謝罪。`);
+          
+          const hasWolfClaw = actor.gameRole.claws > 0;
+          if (actor.gameRole.name === '獵人' || actor.gameRole.name === '狼王' || actor.gameRole.name === '覺醒狼王' || hasWolfClaw) {
+            actor.gameRole.canShoot = true;
+          }
+          
+          const partner = checkPhantomBondDeath(room, actor.id);
+          if (partner) {
+            io.to(roomId).emit('game_log', `【生死連結】玩家 ${partner.name} 隨之出局！`);
+          }
         }
         io.to(roomId).emit('room_update', room);
       }

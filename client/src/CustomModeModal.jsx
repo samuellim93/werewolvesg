@@ -1,19 +1,27 @@
 import React, { useState, useEffect } from 'react';
 
-const BAD_ROLES = ['狼人', '狼王', '機械狼', '夢魘', '石像鬼'];
-const GOOD_ROLES = ['預言家', '女巫', '獵人', '守衛', '白痴', '攝夢人', '通靈師', '魔術師', '獵魔人', '守墓人', '騎士'];
+const BAD_ROLES = [
+  '狼人', '狼王', '機械狼', '夢魘', '石像鬼',
+  '狼美人', '白狼王', '隱狼', '血月使徒', '惡靈騎士',
+  '覺醒狼王', '覺醒隱狼', '尋香魅影'
+];
+const GOOD_ROLES = [
+  '預言家', '女巫', '獵人', '守衛', '白痴', '攝夢人', '通靈師', '魔術師', '獵魔人', '守墓人', '騎士',
+  '覺醒預言家'
+];
 
 const getNightActingRoles = (badRoles, goodRoles) => {
   const active = new Set();
   badRoles.forEach(role => {
-    if (role === '狼人' || role === '狼王') {
+    if (['狼人', '狼王', '狼美人', '白狼王', '血月使徒', '惡靈騎士', '覺醒狼王'].includes(role)) {
       active.add('狼人');
-    } else if (['機械狼', '夢魘', '石像鬼'].includes(role)) {
+    }
+    if (['機械狼', '夢魘', '石像鬼', '覺醒狼王', '覺醒隱狼', '尋香魅影'].includes(role)) {
       active.add(role);
     }
   });
   goodRoles.forEach(role => {
-    if (['預言家', '女巫', '獵人', '守衛', '攝夢人', '通靈師', '魔術師', '獵魔人', '守墓人'].includes(role)) {
+    if (['預言家', '女巫', '獵人', '守衛', '攝夢人', '通靈師', '魔術師', '獵魔人', '守墓人', '覺醒預言家'].includes(role)) {
       active.add(role);
     }
   });

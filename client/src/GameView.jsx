@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import useNarrator from './useNarrator';
 
-const WOLF_GROUP_ROLES = ['狼人', '狼王', '狼美人', '白狼王', '惡靈騎士', '夢魘', '血月使徒'];
+const WOLF_GROUP_ROLES = ['狼人', '狼王', '狼美人', '白狼王', '惡靈騎士', '夢魘', '血月使徒', '覺醒狼王', '覺醒隱狼', '尋香魅影'];
 
 const PlayerSlot = React.memo(({ index, player, socketId, hasGodMode, isVictim, isWolf, onClick }) => {
   return (
@@ -56,9 +56,13 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
   const [pendingAction, setPendingAction] = useState(null);
   const [canAct, setCanAct] = useState(false);
   const [selectedMagicianTargets, setSelectedMagicianTargets] = useState([]);
+  const [selectedSeerTargets, setSelectedSeerTargets] = useState([]);
+  const [selectedPhantomTargets, setSelectedPhantomTargets] = useState([]);
 
   useEffect(() => {
     setSelectedMagicianTargets([]);
+    setSelectedSeerTargets([]);
+    setSelectedPhantomTargets([]);
   }, [room.phase]);
 
   const { speak, stopSpeech, NARRATION_SEQUENCE } = useNarrator();
@@ -218,6 +222,42 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
       socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
     }
   }, [selectedMagicianTargets, NARRATION_SEQUENCE, room.phase, room.id, room.currentSequenceId, socket, speak]);
+
+  const handleSeerToggle = useCallback((id) => {
+    setSelectedSeerTargets(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      if (prev.length >= 2) return [prev[1], id];
+      return [...prev, id];
+    });
+  }, []);
+
+  const confirmSeerCheck = useCallback(() => {
+    if (selectedSeerTargets.length !== 2) return;
+    socket.emit('awakened_seer_verify', { roomId: room.id, targets: selectedSeerTargets });
+  }, [selectedSeerTargets, room.id, socket]);
+
+  const handlePhantomToggle = useCallback((id) => {
+    setSelectedPhantomTargets(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      if (prev.length >= 2) return [prev[1], id];
+      return [...prev, id];
+    });
+  }, []);
+
+  const confirmPhantomBind = useCallback(() => {
+    if (selectedPhantomTargets.length !== 2) return;
+    const seq = NARRATION_SEQUENCE[room.phase];
+    if (seq && seq.closing) {
+      setCanAct(false);
+      speak(seq.closing, () => {
+        socket.emit('scent_phantom_bind', { roomId: room.id, targets: selectedPhantomTargets });
+        socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
+      });
+    } else {
+      socket.emit('scent_phantom_bind', { roomId: room.id, targets: selectedPhantomTargets });
+      socket.emit('advance_sequence', { roomId: room.id, currentId: room.currentSequenceId });
+    }
+  }, [selectedPhantomTargets, NARRATION_SEQUENCE, room.phase, room.id, room.currentSequenceId, socket, speak]);
 
   const handleEndGame = useCallback(() => {
     stopSpeech();
@@ -499,6 +539,188 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
             <button className="btn btn-primary btn-action" style={{ width: 'auto', padding: '10px 40px' }} onClick={handleFinishTurn}>確認 (OK)</button>
           </div>
         );
+    }
+
+    if (room.phase === 'NIGHT_AWAKENED_SEER' && (role?.name === '覺醒預言家' || hasGodMode)) {
+      return (
+        <div>
+          <h4>覺醒預言家行動：請選擇兩名查驗目標</h4>
+          <p style={{ color: 'var(--amber-glow)', fontSize: '0.9rem' }}>
+            已選中: {selectedSeerTargets.map(id => {
+              const p = room.players.find(x => x.id === id);
+              const spot = room.slots.findIndex(s => s?.id === id) + 1;
+              return p ? `#${spot} ${p.name}` : '';
+            }).filter(Boolean).join(' 和 ')}
+          </p>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+            {room.slots.map((p, i) => p && p.gameRole?.isAlive && (
+              <button 
+                key={p.id} 
+                className={`btn btn-action ${selectedSeerTargets.includes(p.id) ? 'btn-primary' : 'btn-secondary'}`} 
+                style={{ width: 'auto', fontSize: '0.9rem' }} 
+                onClick={() => handleSeerToggle(p.id)}
+              >
+                #{i + 1}
+              </button>
+            ))}
+          </div>
+          {selectedSeerTargets.length === 2 && (
+            <button className="btn btn-primary btn-action" style={{ marginTop: '15px', width: 'auto', padding: '10px 40px' }} onClick={confirmSeerCheck}>
+              確認查驗 (Verify)
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    if (room.phase === 'NIGHT_AWAKENED_WOLF_KING' && (role?.name === '覺醒狼王' || hasGodMode)) {
+      const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '覺醒狼王') : myPlayer;
+      const claws = targetPlayer?.gameRole?.claws || 0;
+      const isPoisoned = room.nightActions.poisoned === targetPlayer?.id;
+      
+      const teammates = room.slots.filter(p => p && p.id !== targetPlayer?.id && p.gameRole?.isAlive && WOLF_GROUP_ROLES.includes(p.gameRole?.name));
+
+      return (
+        <div>
+          <h4>覺醒狼王行動：傳授狼王爪或自刀</h4>
+          <p style={{ fontSize: '0.9rem' }}>
+            你的狀態：<strong>擁有 {claws} 個狼王爪</strong>
+            {isPoisoned && <span style={{ color: '#ff4444' }}> (被女巫毒殺，出局無法開槍)</span>}
+          </p>
+          
+          {claws > 0 && teammates.length > 0 && (
+            <div style={{ marginTop: '10px' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-dim)' }}>選擇傳給一名狼隊友 (消耗 1 次技能):</p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '5px' }}>
+                {teammates.map(p => {
+                  const spot = room.slots.findIndex(s => s?.id === p.id) + 1;
+                  return (
+                    <button 
+                      key={p.id} 
+                      className="btn btn-secondary btn-action" 
+                      style={{ width: 'auto', fontSize: '0.85rem' }} 
+                      onClick={() => {
+                        socket.emit('awakened_wolf_king_pass_claw', { roomId: room.id, targetId: p.id });
+                        handleFinishTurn();
+                      }}
+                    >
+                      傳給 #{spot} ({p.name})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+            <button 
+              className="btn btn-action" 
+              style={{ width: 'auto', background: '#ff4444', border: 'none', color: 'white' }}
+              onClick={() => {
+                socket.emit('awakened_wolf_king_self_kill', { roomId: room.id });
+                handleFinishTurn();
+              }}
+            >
+              💀 選擇自刀出局
+            </button>
+            <button className="btn btn-secondary btn-action" style={{ width: 'auto' }} onClick={handleFinishTurn}>
+              不傳授/確認閉眼
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (room.phase === 'NIGHT_AWAKENED_HIDDEN_WOLF' && (role?.name === '覺醒隱狼' || hasGodMode)) {
+      const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '覺醒隱狼') : myPlayer;
+      const mimickedFrom = targetPlayer?.gameRole?.mimickedFrom;
+
+      return (
+        <div>
+          <h4>覺醒隱狼行動：模仿其他玩家</h4>
+          {mimickedFrom ? (
+            <div>
+              <p style={{ color: 'var(--amber-glow)', margin: '10px 0' }}>
+                🎭 你已經成功模仿了 <strong>{mimickedFrom}</strong>，正在獲取其身份技能。
+              </p>
+              <button className="btn btn-primary btn-action" style={{ width: 'auto', padding: '10px 40px' }} onClick={handleFinishTurn}>確認閉眼</button>
+            </div>
+          ) : (
+            <div>
+              <p style={{ color: 'var(--text-dim)', fontSize: '0.9rem', marginBottom: '10px' }}>請選擇一名玩家進行模仿，你將立刻獲得其身份與技能：</p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {room.slots.map((p, i) => p && p.id !== targetPlayer?.id && p.gameRole?.isAlive && (
+                  <button 
+                    key={p.id} 
+                    className="btn btn-secondary btn-action" 
+                    style={{ width: 'auto', fontSize: '0.9rem' }} 
+                    onClick={() => {
+                      socket.emit('awakened_hidden_wolf_mimic', { roomId: room.id, targetId: p.id });
+                      handleFinishTurn();
+                    }}
+                  >
+                    模仿 #{i + 1} ({p.name})
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (room.phase === 'NIGHT_SCENT_PHANTOM' && (role?.name === '尋香魅影' || hasGodMode)) {
+      const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '尋香魅影') : myPlayer;
+      return (
+        <div>
+          <h4>尋香魅影行動：綁定生命線</h4>
+          
+          {room.scentKnownWolfSpot ? (
+            <p style={{ color: 'var(--amber-glow)', fontSize: '0.85rem', marginBottom: '12px' }}>
+              📢 你的首夜線索：存活狼人同伴此時在 <strong>{room.scentKnownWolfSpot}</strong> 號座位。
+            </p>
+          ) : (
+            <p style={{ color: 'var(--text-dim)', fontSize: '0.85rem', marginBottom: '12px' }}>
+              📢 首夜線索：場上無其他存活的狼人同伴。
+            </p>
+          )}
+
+          {room.isBondTriggered ? (
+            <p style={{ color: '#ff4444', fontSize: '0.9rem' }}>⚠️ 你的生死連結已經在本局中觸發，無法再進行綁定。</p>
+          ) : (
+            <div>
+              <p style={{ color: 'var(--amber-glow)', fontSize: '0.9rem' }}>
+                已選中綁定兩人: {selectedPhantomTargets.map(id => {
+                  const p = room.players.find(x => x.id === id);
+                  const spot = room.slots.findIndex(s => s?.id === id) + 1;
+                  return p ? `#${spot} ${p.name}` : '';
+                }).filter(Boolean).join(' 和 ')}
+              </p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+                {room.slots.map((p, i) => p && p.gameRole?.isAlive && (
+                  <button 
+                    key={p.id} 
+                    className={`btn btn-action ${selectedPhantomTargets.includes(p.id) ? 'btn-primary' : 'btn-secondary'}`} 
+                    style={{ width: 'auto', fontSize: '0.9rem' }} 
+                    onClick={() => handlePhantomToggle(p.id)}
+                  >
+                    #{i + 1}
+                  </button>
+                ))}
+              </div>
+              {selectedPhantomTargets.length === 2 && (
+                <button className="btn btn-primary btn-action" style={{ marginTop: '15px', width: 'auto', padding: '10px 40px' }} onClick={confirmPhantomBind}>
+                  確認綁定 (Bind)
+                </button>
+              )}
+            </div>
+          )}
+
+          {room.isBondTriggered && (
+            <button className="btn btn-primary btn-action" style={{ marginTop: '10px', width: 'auto' }} onClick={handleFinishTurn}>確認閉眼</button>
+          )}
+        </div>
+      );
     }
 
     if (room.status === 'DAY') {

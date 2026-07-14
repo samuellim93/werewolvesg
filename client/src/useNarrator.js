@@ -121,6 +121,30 @@ const useNarrator = () => {
         opening: '守墓人請睜眼。請確認昨晚出局玩家的陣營。', 
         closing: '守墓人請閉眼。' 
     },
+    'NIGHT_AWAKENED_HIDDEN_WOLF': {
+        type: 'ACTION',
+        role: '覺醒隱狼',
+        opening: '覺醒隱狼請睜眼。請選擇你想模仿的目標。',
+        closing: '覺醒隱狼請閉眼。'
+    },
+    'NIGHT_SCENT_PHANTOM': {
+        type: 'ACTION',
+        role: '尋香魅影',
+        opening: '尋香魅影請睜眼。請確認你的狼隊友位置，並選擇你今晚要綁定的目標。',
+        closing: '尋香魅影請閉眼。'
+    },
+    'NIGHT_AWAKENED_WOLF_KING': {
+        type: 'ACTION',
+        role: '覺醒狼王',
+        opening: '覺醒狼王請睜眼。請問你今晚要傳授狼王爪給誰，或者選擇自刀？',
+        closing: '覺醒狼王請閉眼。'
+    },
+    'NIGHT_AWAKENED_SEER': {
+        type: 'ACTION',
+        role: '覺醒預言家',
+        opening: '覺醒預言家請睜眼。請選擇你今晚要查驗的兩名玩家。',
+        closing: '覺醒預言家請閉眼。'
+    },
     'RESULTS': { 
       type: 'AUTO', 
       text: '天亮了，所有人请睁眼。' 

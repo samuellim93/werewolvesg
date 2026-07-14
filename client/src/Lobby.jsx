@@ -7,6 +7,12 @@ function Lobby({ user, onLogout, onCreateRoom, onJoinRoom, onOpenVotes }) {
 
   const GAME_MODES = [
     {
+      id: 'scent-phantom-awakened-seer',
+      name: '12人【尋香識命】',
+      description: '尋香魅影綁定生命，覺醒預言家雙重查驗。',
+      serverMode: '尋香識命'
+    },
+    {
       id: 'pre-witch-hunter-idiot',
       name: '預女獵白 · 標準 12 人場',
       description: '最經典的競技板子，博弈平衡性極佳。',
