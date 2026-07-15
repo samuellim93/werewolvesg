@@ -576,6 +576,7 @@ io.on('connection', (socket) => {
     }
 
     // -- Scent-Seeking Phantom Binding --
+    let linkKilledId = null;
     if (!room.isBondTriggered && room.nightActions.scentPhantomBonds && room.nightActions.scentPhantomBonds.length === 2) {
       const [b1, b2] = room.nightActions.scentPhantomBonds;
       const b1Swapped = getSwappedTarget(room, b1);
@@ -586,10 +587,12 @@ io.on('connection', (socket) => {
       
       if (b1Dies && !b2Dies) {
         deathMap.add(b2Swapped);
+        linkKilledId = b2Swapped;
         room.isBondTriggered = true;
         console.log(`[Scent Phantom Link] Night death triggered link on ${b2Swapped}`);
       } else if (b2Dies && !b1Dies) {
         deathMap.add(b1Swapped);
+        linkKilledId = b1Swapped;
         room.isBondTriggered = true;
         console.log(`[Scent Phantom Link] Night death triggered link on ${b1Swapped}`);
       } else if (b1Dies && b2Dies) {
@@ -607,7 +610,8 @@ io.on('connection', (socket) => {
         // Special Gun / Claws Status
         const hasWolfClaw = p.gameRole.claws > 0;
         if (p.gameRole.name === '獵人' || p.gameRole.name === '狼王' || p.gameRole.name === '覺醒狼王' || hasWolfClaw) {
-          p.gameRole.canShoot = !poisoned || poisoned !== pid;
+          const isLinkKilled = (pid === linkKilledId);
+          p.gameRole.canShoot = (!poisoned || poisoned !== pid) && !isLinkKilled;
         }
       }
     });
@@ -878,6 +882,7 @@ io.on('connection', (socket) => {
           
           const partner = checkPhantomBondDeath(room, target.id);
           if (partner) {
+            partner.gameRole.canShoot = false;
             io.to(roomId).emit('game_log', `【生死連結】玩家 ${partner.name} 隨之出局！`);
           }
           
@@ -893,6 +898,7 @@ io.on('connection', (socket) => {
           
           const partner = checkPhantomBondDeath(room, actor.id);
           if (partner) {
+            partner.gameRole.canShoot = false;
             io.to(roomId).emit('game_log', `【生死連結】玩家 ${partner.name} 隨之出局！`);
           }
         }

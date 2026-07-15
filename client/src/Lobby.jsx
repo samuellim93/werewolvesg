@@ -8,8 +8,8 @@ function Lobby({ user, onLogout, onCreateRoom, onJoinRoom, onOpenVotes }) {
   const GAME_MODES = [
     {
       id: 'scent-phantom-awakened-seer',
-      name: '12人【尋香識命】',
-      description: '尋香魅影綁定生命，覺醒預言家雙重查驗。',
+      name: '尋香識命 · 12 人場',
+      description: '配置：尋香魅影、3 狼人、覺醒預言家、女巫、獵人、守衛、4 平民。尋香魅影首夜隨機知曉一名狼人位置。',
       serverMode: '尋香識命'
     },
     {
