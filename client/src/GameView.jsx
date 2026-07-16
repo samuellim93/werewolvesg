@@ -277,6 +277,19 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
     socket.emit('enter_night', room.id);
   }, [socket, room.id]);
 
+  const getGunshotLockedOut = useCallback((targetPlayer) => {
+    if (!targetPlayer) return false;
+    const isPoisoned = room.nightActions.poisoned === targetPlayer.id;
+    const bonds = room.nightActions.scentPhantomBonds;
+    const partnerId = bonds ? (bonds[0] === targetPlayer.id ? bonds[1] : (bonds[1] === targetPlayer.id ? bonds[0] : null)) : null;
+    if (!partnerId) return isPoisoned;
+    const partnerSaved = room.nightActions.saved && room.nightActions.killed === partnerId;
+    const partnerGuarded = room.nightActions.guarded === partnerId;
+    const partnerDiesOfKill = (room.nightActions.killed === partnerId) && (!partnerSaved || partnerGuarded);
+    const partnerDiesOfPoison = room.nightActions.poisoned === partnerId;
+    return isPoisoned || partnerDiesOfKill || partnerDiesOfPoison;
+  }, [room.nightActions]);
+
   const renderActions = () => {
     if (!isAlive && !myPlayer?.gameRole?.isIdiotRevealed && !hasGodMode && !isCreator) return <p style={{ color: '#ff4444' }}>你已被淘汰。</p>;
 
@@ -370,14 +383,14 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
 
     if (room.phase === 'NIGHT_HUNTER' && (role?.name === '獵人' || hasGodMode) ) {
         const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '獵人') : myPlayer;
-        const isPoisoned = room.nightActions.poisoned === targetPlayer?.id;
+        const isLockedOut = getGunshotLockedOut(targetPlayer);
 
         return (
           <div>
             <h4>獵人行動：</h4>
             <p style={{ marginBottom: '15px', fontSize: '0.9rem' }}>
               你的技能狀態：
-              {isPoisoned ? (
+              {isLockedOut ? (
                 <strong style={{ color: '#ff4444' }}> 不可用</strong>
               ) : (
                 <strong style={{ color: 'var(--amber-glow)' }}> 可用</strong>
@@ -532,15 +545,15 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
 
     if (room.phase === 'NIGHT_WOLF_KING' && (role?.name === '狼王' || hasGodMode)) {
         const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '狼王') : myPlayer;
-        const isPoisoned = room.nightActions.poisoned === targetPlayer?.id;
+        const isLockedOut = getGunshotLockedOut(targetPlayer);
 
         return (
           <div>
             <h4>狼王行動：</h4>
             <p style={{ marginBottom: '15px', fontSize: '0.9rem' }}>
               你的技能狀態：
-              {isPoisoned ? (
-                <strong style={{ color: '#ff4444' }}> 不可用 (被女巫毒殺)</strong>
+              {isLockedOut ? (
+                <strong style={{ color: '#ff4444' }}> 不可用 (被女巫毒殺或生死連結)</strong>
               ) : (
                 <strong style={{ color: 'var(--amber-glow)' }}> 可用</strong>
               )}
@@ -585,7 +598,7 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
     if (room.phase === 'NIGHT_AWAKENED_WOLF_KING' && (role?.name === '覺醒狼王' || hasGodMode)) {
       const targetPlayer = hasGodMode ? room.players.find(p => p.gameRole?.name === '覺醒狼王') : myPlayer;
       const claws = targetPlayer?.gameRole?.claws || 0;
-      const isPoisoned = room.nightActions.poisoned === targetPlayer?.id;
+      const isLockedOut = getGunshotLockedOut(targetPlayer);
       
       const teammates = room.slots.filter(p => p && p.id !== targetPlayer?.id && p.gameRole?.isAlive && WOLF_GROUP_ROLES.includes(p.gameRole?.name));
 
@@ -594,7 +607,7 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
           <h4>覺醒狼王行動：傳授狼王爪或自刀</h4>
           <p style={{ fontSize: '0.9rem' }}>
             你的狀態：<strong>擁有 {claws} 個狼王爪</strong>
-            {isPoisoned && <span style={{ color: '#ff4444' }}> (被女巫毒殺，出局無法開槍)</span>}
+            {isLockedOut && <span style={{ color: '#ff4444' }}> (被女巫毒殺或生死連結，出局無法開槍)</span>}
           </p>
           
           {claws > 0 && teammates.length > 0 && (
@@ -948,8 +961,29 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
 
       {showHistoryModal && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.95)', zIndex: 3000, display: 'flex', justifyContent: 'center', alignItems: 'center', borderRadius: '20px', padding: '20px' }}>
-          <div className="card" style={{ width: '100%', maxWidth: '400px', maxHeight: '80%', display: 'flex', flexDirection: 'column', border: '2px solid var(--amber-glow)' }}>
+          <div className="card" style={{ width: '100%', maxWidth: '400px', maxHeight: '90%', display: 'flex', flexDirection: 'column', border: '2px solid var(--amber-glow)' }}>
             <h2 className="glow-text" style={{ marginBottom: '15px', textAlign: 'center' }}>夜间行动记录</h2>
+            
+            {/* 📋 玩家身份配置表 */}
+            <div style={{ marginBottom: '15px', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '10px', border: '1px solid rgba(255, 191, 0, 0.2)' }}>
+              <h4 style={{ color: 'var(--amber-glow)', marginBottom: '8px', fontSize: '0.9rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '5px', textAlign: 'center' }}>【玩家身份配置表】</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 12px', fontSize: '0.75rem', color: '#fff', maxHeight: '110px', overflowY: 'auto', paddingRight: '2px' }}>
+                {room.slots.map((p, i) => {
+                  if (!p) return (
+                    <div key={i} style={{ color: 'var(--text-dim)' }}>
+                      #{i + 1} 空席
+                    </div>
+                  );
+                  return (
+                    <div key={p.id || i} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.02)', paddingBottom: '2px' }}>
+                      <span style={{ fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '90px' }}>#{i + 1} {p.name}</span>
+                      <span style={{ color: 'var(--amber-glow)', fontWeight: '600', marginLeft: '5px' }}>{p.gameRole?.name || '未知'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             <div style={{ flex: 1, overflowY: 'auto', paddingRight: '5px', textAlign: 'left', marginBottom: '20px' }}>
               {nightHistory.length === 0 ? (
                 <p style={{ color: 'var(--text-dim)', textAlign: 'center', margin: '20px 0' }}>暂无夜间行动记录。</p>
