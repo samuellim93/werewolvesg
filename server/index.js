@@ -121,6 +121,14 @@ function checkPhantomBondDeath(room, deadId) {
   return null;
 }
 
+function logNightAction(room, message) {
+  if (!room.currentNightActions) {
+    room.currentNightActions = [];
+  }
+  room.currentNightActions.push(message);
+  console.log(`[Night Log] Room ${room.id}: ${message}`);
+}
+
 io.on('connection', (socket) => {
   socket.on('login', (data) => {
     const user = { name: data.type === 'guest' ? data.name : data.username, id: socket.id, role_type: data.type === 'guest' ? 'guest' : 'user' };
@@ -139,6 +147,7 @@ io.on('connection', (socket) => {
       maxPlayers: config ? config.maxPlayers : maxPlayers, 
       status: 'LOBBY', isSimulation: false,
       swappedIds: [],
+      nightHistory: [],
       sheriffEnabled: (config && config.sheriffEnabled) ? config.sheriffEnabled : false,
       sequenceOrder: (config && config.sequenceOrder) ? config.sequenceOrder : getDefaultSequenceForMode(gameMode, config),
       customConfig: config
@@ -379,6 +388,8 @@ io.on('connection', (socket) => {
     room.round = (room.round || 0) + 1;
     room.currentSequenceId = 1;
     room.phase = 'NIGHT_DUSK';
+    room.currentNightActions = [];
+    if (!room.nightHistory) room.nightHistory = [];
 
     // Reset nightActions but preserve scentPhantomBonds across nights
     const existingBonds = room.nightActions ? room.nightActions.scentPhantomBonds : [];
@@ -616,6 +627,12 @@ io.on('connection', (socket) => {
       }
     });
 
+    if (!room.nightHistory) room.nightHistory = [];
+    room.nightHistory.push({
+      night: room.round || 1,
+      actions: room.currentNightActions && room.currentNightActions.length > 0 ? [...room.currentNightActions] : ["無任何夜間行動提交。"]
+    });
+
     room.nightResults = results;
     console.log(`[Transition] Room: ${roomId} - Switching to DAY. Results:`, results);
     
@@ -660,6 +677,8 @@ io.on('connection', (socket) => {
         return;
       }
       room.nightActions.killed = targetId;
+      const spot = target ? (room.slots.findIndex(s => s?.id === targetId) + 1) : '空';
+      logNightAction(room, `狼人擊殺：#${spot} 玩家`);
       io.to(roomId).emit('room_update', room);
     }
   });
@@ -673,7 +692,10 @@ io.on('connection', (socket) => {
       const swappedTargetId = getSwappedTarget(room, targetId);
       const swappedTarget = room.players.find(p => p.id === swappedTargetId);
       if (target && swappedTarget) {
-        socket.emit('verify_result', { name: target.name, alignment: swappedTarget.gameRole.alignment });
+        const spot = room.slots.findIndex(s => s?.id === targetId) + 1;
+        const align = swappedTarget.gameRole.alignment;
+        logNightAction(room, `預言家查驗：#${spot} 玩家 (結果：${align === 'Bad' ? '壞人' : '好人'})`);
+        socket.emit('verify_result', { name: target.name, alignment: align });
       }
     }
   });
@@ -683,8 +705,16 @@ io.on('connection', (socket) => {
     if (!room || room.phase !== 'NIGHT_WITCH') return;
     const player = room.players.find(p => p.id === socket.id);
     if (player?.gameRole?.name === '女巫' || (room.isSimulation && socket.id === room.creator)) {
-      if (action === 'save') room.nightActions.saved = true;
-      if (action === 'poison') room.nightActions.poisoned = targetId;
+      if (action === 'save') {
+        room.nightActions.saved = true;
+        logNightAction(room, `女巫救人：是`);
+      }
+      if (action === 'poison') {
+        room.nightActions.poisoned = targetId;
+        const target = room.players.find(p => p.id === targetId);
+        const spot = target ? (room.slots.findIndex(s => s?.id === targetId) + 1) : '空';
+        logNightAction(room, `女巫毒殺：#${spot} 玩家`);
+      }
       io.to(roomId).emit('room_update', room);
     }
   });
@@ -693,6 +723,13 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room || room.phase !== 'NIGHT_GUARD') return;
     room.nightActions.guarded = targetId;
+    if (targetId) {
+      const target = room.players.find(p => p.id === targetId);
+      const spot = target ? (room.slots.findIndex(s => s?.id === targetId) + 1) : '空';
+      logNightAction(room, `守衛守護：#${spot} 玩家`);
+    } else {
+      logNightAction(room, `守衛守護：空守`);
+    }
     io.to(roomId).emit('room_update', room);
   });
 
@@ -700,6 +737,13 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room || room.phase !== 'NIGHT_DREAMCATCHER') return;
     room.nightActions.dreaming = targetId;
+    if (targetId) {
+      const target = room.players.find(p => p.id === targetId);
+      const spot = target ? (room.slots.findIndex(s => s?.id === targetId) + 1) : '空';
+      logNightAction(room, `攝夢人攝夢：#${spot} 玩家`);
+    } else {
+      logNightAction(room, `攝夢人攝夢：空夢`);
+    }
     io.to(roomId).emit('room_update', room);
   });
 
@@ -722,6 +766,9 @@ io.on('connection', (socket) => {
 
     room.nightActions.magicianSwaps = targets;
     room.swappedIds.push(targets[0], targets[1]);
+    const spot1 = room.slots.findIndex(s => s?.id === targets[0]) + 1;
+    const spot2 = room.slots.findIndex(s => s?.id === targets[1]) + 1;
+    logNightAction(room, `魔術師交換：#${spot1} 和 #${spot2} 玩家`);
     io.to(roomId).emit('room_update', room);
   });
 
@@ -736,6 +783,9 @@ io.on('connection', (socket) => {
       if (room.phase === 'NIGHT_PSYCHIC' && swappedTarget.gameRole.name === '機械狼') {
         roleNameToShow = swappedTarget.gameRole.learnedRole || '機械狼';
       }
+      const spot = room.slots.findIndex(s => s?.id === targetId) + 1;
+      const label = room.phase === 'NIGHT_GARGOYLE' ? '石像鬼查驗' : '通靈師查驗';
+      logNightAction(room, `${label}：#${spot} 玩家 (結果：${roleNameToShow})`);
       socket.emit('verify_result', { name: target.name, alignment: swappedTarget.gameRole.alignment, roleName: roleNameToShow });
     }
   });
@@ -744,6 +794,9 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room || room.phase !== 'NIGHT_NIGHTMARE') return;
     room.nightActions.feared = targetId;
+    const target = room.players.find(p => p.id === targetId);
+    const spot = target ? (room.slots.findIndex(s => s?.id === targetId) + 1) : '空';
+    logNightAction(room, `夢魘恐懼：#${spot} 玩家`);
     io.to(roomId).emit('room_update', room);
   });
 
@@ -762,6 +815,8 @@ io.on('connection', (socket) => {
         player.gameRole.learnedRole = swappedTarget.gameRole.name;
         socket.emit('verify_result', { name: target.name, alignment: swappedTarget.gameRole.alignment, roleName: swappedTarget.gameRole.name });
       }
+      const spot = room.slots.findIndex(s => s?.id === targetId) + 1;
+      logNightAction(room, `機械狼學習：#${spot} 玩家 (${swappedTarget.gameRole.name})`);
       socket.emit('game_log', `你成功學習了 ${target.name} 的技能 (${swappedTarget.gameRole.name})`);
     }
   });
@@ -770,6 +825,9 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (!room || room.phase !== 'NIGHT_DEMON_HUNTER') return;
     room.nightActions.hunted = targetId;
+    const target = room.players.find(p => p.id === targetId);
+    const spot = target ? (room.slots.findIndex(s => s?.id === targetId) + 1) : '空';
+    logNightAction(room, `獵魔人狩獵：#${spot} 玩家`);
     io.to(roomId).emit('room_update', room);
   });
   socket.on('awakened_seer_verify', ({ roomId, targets }) => {
@@ -791,6 +849,10 @@ io.on('connection', (socket) => {
       
       const finalAlignment = (isGood1 && isGood2) ? 'Good' : 'Bad';
       
+      const spot1 = room.slots.findIndex(s => s?.id === targets[0]) + 1;
+      const spot2 = room.slots.findIndex(s => s?.id === targets[1]) + 1;
+      logNightAction(room, `覺醒預言家查驗：#${spot1} 和 #${spot2} 玩家 (結果：${finalAlignment === 'Good' ? '好人' : '壞人'})`);
+      
       socket.emit('verify_result', { 
         name: `${target1.name} 和 ${target2.name}`, 
         alignment: finalAlignment
@@ -811,6 +873,8 @@ io.on('connection', (socket) => {
     if (actor && teammate && actor.gameRole.claws > 0) {
       teammate.gameRole.claws = (teammate.gameRole.claws || 0) + 1;
       actor.gameRole.claws--;
+      const teammateSpot = room.slots.findIndex(s => s?.id === targetId) + 1;
+      logNightAction(room, `覺醒狼王傳爪：#${teammateSpot} 玩家`);
       console.log(`[Awakened Wolf King] Passed claw to ${teammate.name}. Teammate claws: ${teammate.gameRole.claws}, Actor claws: ${actor.gameRole.claws}`);
       io.to(roomId).emit('room_update', room);
     }
@@ -827,6 +891,8 @@ io.on('connection', (socket) => {
     
     if (actor) {
       room.nightActions.killed = actor.id;
+      const spot = room.slots.findIndex(s => s?.id === actor.id) + 1;
+      logNightAction(room, `覺醒狼王自刀：#${spot} 玩家`);
       console.log(`[Awakened Wolf King] Self killed: ${actor.name}`);
       io.to(roomId).emit('room_update', room);
     }
@@ -847,6 +913,8 @@ io.on('connection', (socket) => {
     
     if (actor && target && swappedTarget) {
       actor.gameRole.mimickedFrom = swappedTarget.gameRole.name;
+      const spot = room.slots.findIndex(s => s?.id === targetId) + 1;
+      logNightAction(room, `覺醒隱狼模仿：#${spot} 玩家 (${swappedTarget.gameRole.name})`);
       console.log(`[Awakened Hidden Wolf] Mimicked ${target.name} (${swappedTarget.gameRole.name})`);
       io.to(roomId).emit('room_update', room);
     }
@@ -857,6 +925,9 @@ io.on('connection', (socket) => {
     if (!room || room.phase !== 'NIGHT_SCENT_PHANTOM' || !targets || targets.length !== 2) return;
     
     room.nightActions.scentPhantomBonds = targets;
+    const spot1 = room.slots.findIndex(s => s?.id === targets[0]) + 1;
+    const spot2 = room.slots.findIndex(s => s?.id === targets[1]) + 1;
+    logNightAction(room, `尋香魅影綁定：#${spot1} 和 #${spot2} 玩家`);
     console.log(`[Scent Phantom] Bound: ${targets.join(' and ')}`);
     io.to(roomId).emit('room_update', room);
   });
@@ -904,6 +975,13 @@ io.on('connection', (socket) => {
         }
         io.to(roomId).emit('room_update', room);
       }
+    }
+  });
+
+  socket.on('request_night_history', (roomId) => {
+    const room = rooms[roomId];
+    if (room && room.creator === socket.id) {
+      socket.emit('night_history_data', room.nightHistory || []);
     }
   });
 

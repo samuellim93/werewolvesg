@@ -112,6 +112,18 @@ function Room({ room, socket, onLeave, onToggleReady, onStart, onOpenVotes }) {
         { name: '守衛', count: 1 },
         { name: '平民', count: 4 }
       ];
+    } else if (room.mode === '尋香識命') {
+      modeTitle = '尋香識命 · 12 人場';
+      introText = `狼人殺 (尋香識命) 是標準的 12 人板子：`;
+      rolesList = [
+        { name: '狼人', count: 3 },
+        { name: '尋香魅影', count: 1 },
+        { name: '覺醒預言家', count: 1 },
+        { name: '女巫', count: 1 },
+        { name: '獵人', count: 1 },
+        { name: '守衛', count: 1 },
+        { name: '平民', count: 4 }
+      ];
     } else if (room.mode === 'CUSTOM') {
       modeTitle = '自定義配置模式';
       introText = `自定義 ${room.maxPlayers} 人自定義角色配置：`;
@@ -231,6 +243,7 @@ function Room({ room, socket, onLeave, onToggleReady, onStart, onOpenVotes }) {
               room.mode === '預女獵' ? '預女獵 · 標準 9 人場' : 
               room.mode === '狼王攝夢人' ? '狼王 & 攝夢人 · 12 人場' : 
               room.mode === '機械狼通女獵守' ? '機械狼 vs 通女獵守 · 12 人場' : 
+              room.mode === '尋香識命' ? '尋香識命 · 12 人場' : 
               room.mode === 'CUSTOM' ? '自定義配置模式' : 
               '預女獵白 · 標準 12 人場'
             }

@@ -58,6 +58,8 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
   const [selectedMagicianTargets, setSelectedMagicianTargets] = useState([]);
   const [selectedSeerTargets, setSelectedSeerTargets] = useState([]);
   const [selectedPhantomTargets, setSelectedPhantomTargets] = useState([]);
+  const [nightHistory, setNightHistory] = useState([]);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   useEffect(() => {
     setSelectedMagicianTargets([]);
@@ -131,10 +133,12 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
   useEffect(() => {
     socket.on('verify_result', (result) => setVerifyResult(result));
     socket.on('game_log', (msg) => setLog(prev => [...prev, `• ${msg}`]));
+    socket.on('night_history_data', (data) => setNightHistory(data));
     
     return () => {
       socket.off('verify_result');
       socket.off('game_log');
+      socket.off('night_history_data');
     };
   }, [socket]);
 
@@ -235,6 +239,11 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
     if (selectedSeerTargets.length !== 2) return;
     socket.emit('awakened_seer_verify', { roomId: room.id, targets: selectedSeerTargets });
   }, [selectedSeerTargets, room.id, socket]);
+
+  const fetchNightHistory = useCallback(() => {
+    socket.emit('request_night_history', room.id);
+    setShowHistoryModal(true);
+  }, [room.id, socket]);
 
   const handlePhantomToggle = useCallback((id) => {
     setSelectedPhantomTargets(prev => {
@@ -898,6 +907,15 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
           <p style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}>房号 {room.id}</p>
         </div>
         <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+          {isCreator && (
+            <button 
+              className="btn btn-secondary" 
+              style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', borderColor: 'var(--amber-dim)', color: 'var(--amber-glow)', margin: 0 }}
+              onClick={fetchNightHistory}
+            >
+              夜间记录
+            </button>
+          )}
           <button className="btn btn-secondary" style={{ width: 'auto', padding: '8px 12px', fontSize: '0.8rem', borderColor: 'var(--text-dim)', margin: 0 }} onClick={onOpenVotes}>Vote</button>
           {isSimulation && isCreator && <button className="btn btn-primary" style={{ width: 'auto', background: '#ff4444', border: 'none', padding: '8px 12px', margin: 0 }} onClick={handleEndGame}>🛑 结束</button>}
           <span className="reveal-link" style={{ fontSize: '0.9rem' }} onClick={() => setShowRole(true)}>Reveal</span>
@@ -928,6 +946,32 @@ function GameView({ room, socket, role, onLeave, onOpenVotes }) {
 
       {/* Log section removed */}
 
+      {showHistoryModal && (
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.95)', zIndex: 3000, display: 'flex', justifyContent: 'center', alignItems: 'center', borderRadius: '20px', padding: '20px' }}>
+          <div className="card" style={{ width: '100%', maxWidth: '400px', maxHeight: '80%', display: 'flex', flexDirection: 'column', border: '2px solid var(--amber-glow)' }}>
+            <h2 className="glow-text" style={{ marginBottom: '15px', textAlign: 'center' }}>夜间行动记录</h2>
+            <div style={{ flex: 1, overflowY: 'auto', paddingRight: '5px', textAlign: 'left', marginBottom: '20px' }}>
+              {nightHistory.length === 0 ? (
+                <p style={{ color: 'var(--text-dim)', textAlign: 'center', margin: '20px 0' }}>暂无夜间行动记录。</p>
+              ) : (
+                nightHistory.map((h, idx) => (
+                  <div key={idx} style={{ marginBottom: '15px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px' }}>
+                    <h4 style={{ color: 'var(--amber-glow)', marginBottom: '8px' }}>第 {h.night} 天夜里</h4>
+                    <ul style={{ listStyleType: 'none', paddingLeft: '5px', margin: 0 }}>
+                      {h.actions.map((act, actIdx) => (
+                        <li key={actIdx} style={{ fontSize: '0.9rem', color: '#fff', marginBottom: '4px', lineHeight: '1.4' }}>
+                          • {act}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))
+              )}
+            </div>
+            <button className="btn btn-primary" style={{ width: '100%', marginTop: 'auto' }} onClick={() => setShowHistoryModal(false)}>关闭</button>
+          </div>
+        </div>
+      )}
 
     </div>
   );
